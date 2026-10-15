@@ -226,19 +226,6 @@ class DoubaoModel(BaseModel):
                     "Content-Type": "application/json"
                 }
                 
-                # 处理图像数据
-                if image_data.startswith('data:image'):
-                    # 如果是data URI，提取base64部分
-                    image_data = image_data.split(',', 1)[1]
-                
-                # 构建用户消息 - 使用豆包API官方示例格式
-                # 首先检查图像数据的格式，确保是有效的图像
-                image_format = "jpeg"  # 默认使用jpeg
-                if image_data.startswith('/9j/'):  # JPEG magic number in base64
-                    image_format = "jpeg"
-                elif image_data.startswith('iVBORw0KGgo'):  # PNG magic number in base64
-                    image_format = "png"
-                
                 # 构建消息
                 messages = []
                 
@@ -254,14 +241,10 @@ class DoubaoModel(BaseModel):
                         "type": "text",
                         "text": f"请使用{self.language}分析这张图片并提供详细解答。" if self.language and self.language != 'auto' else "请分析这张图片并提供详细解答?"
                     },
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/{image_format};base64,{image_data}"
-                        }
-                    }
+                    *self._image_content(image_data)
                 ]
 
+                user_content.append({"type": "text", "text": "请按顺序结合全部图片解答同一道题，重叠内容不要重复计算。"})
                 messages.append({
                     "role": "user",
                     "content": user_content

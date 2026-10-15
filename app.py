@@ -104,6 +104,11 @@ def create_model_instance(model_id, settings, is_reasoning=False):
     if not model_id:
         raise ValueError("未选择模型，请先在设置中选择一个模型")
 
+    # 百炼也托管 DeepSeek，优先按配置识别服务提供商。
+    is_alibaba_model = ModelFactory.get_model_provider(model_id) == 'alibaba' or any(
+        keyword in model_id.lower() for keyword in ('qvq', 'alibaba', 'qwen')
+    )
+
     # 提取API密钥
     api_keys = settings.get('apiKeys', {})
     
@@ -117,9 +122,9 @@ def create_model_instance(model_id, settings, is_reasoning=False):
         api_key_id = "AnthropicApiKey"
     elif any(keyword in model_id.lower() for keyword in ["gpt", "openai"]):
         api_key_id = "OpenaiApiKey"
-    elif "deepseek" in model_id.lower():
+    elif "deepseek" in model_id.lower() and not is_alibaba_model:
         api_key_id = "DeepseekApiKey"
-    elif "qvq" in model_id.lower() or "alibaba" in model_id.lower() or "qwen" in model_id.lower():
+    elif is_alibaba_model:
         api_key_id = "AlibabaApiKey"
     elif "gemini" in model_id.lower() or "google" in model_id.lower():
         api_key_id = "GoogleApiKey"
@@ -151,9 +156,9 @@ def create_model_instance(model_id, settings, is_reasoning=False):
             base_url = proxy_api_config.get('apis', {}).get('anthropic', '')
         elif any(keyword in model_id.lower() for keyword in ["gpt", "openai"]):
             base_url = proxy_api_config.get('apis', {}).get('openai', '')
-        elif "deepseek" in model_id.lower():
+        elif "deepseek" in model_id.lower() and not is_alibaba_model:
             base_url = proxy_api_config.get('apis', {}).get('deepseek', '')
-        elif "qvq" in model_id.lower() or "alibaba" in model_id.lower() or "qwen" in model_id.lower():
+        elif is_alibaba_model:
             base_url = proxy_api_config.get('apis', {}).get('alibaba', '')
         elif "gemini" in model_id.lower() or "google" in model_id.lower():
             base_url = proxy_api_config.get('apis', {}).get('google', '')
@@ -174,7 +179,6 @@ def create_model_instance(model_id, settings, is_reasoning=False):
     )
     
     # 设置最大输出Token，但不为阿里巴巴模型设置（它们有自己内部的处理逻辑）
-    is_alibaba_model = "qvq" in model_id.lower() or "alibaba" in model_id.lower() or "qwen" in model_id.lower()
     if not is_alibaba_model:
         model_instance.max_tokens = max_tokens
     
@@ -214,7 +218,7 @@ def handle_analyze_image(data):
     分钟级的生成循环若留在这里会堵死事件下发。"""
     sid = request.sid
     try:
-        image_data = data.get('image')
+        image_data = data.get('images', data.get('image'))
         settings = data.get('settings', {})
 
         reasoning_tier = settings.get('reasoningTier', 'deep')
@@ -224,6 +228,14 @@ def handle_analyze_image(data):
         if not image_data:
             socketio.emit('ai_response', {'status': 'error', 'error': '图像数据不能为空'}, room=sid)
             return
+
+        images = image_data if isinstance(image_data, list) else [image_data]
+        if len(images) > 10 or any(not isinstance(image, str) or not image for image in images):
+            raise ValueError('请发送 1 至 10 张有效截图')
+        if sum(len(image) for image in images) > 40 * 1024 * 1024:
+            raise ValueError('截图总大小过大，请缩小截图范围或减少图片数量')
+        # 保持原来的单图适配器调用方式，多图作为有序列表传递。
+        image_data = images[0] if len(images) == 1 else images
 
         # 同题追问历史（可选）：纯文本轮次列表，只取最近 20 条防滥用
         history = data.get('history')

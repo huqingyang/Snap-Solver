@@ -15,6 +15,10 @@ class SnapSolver {
         this.originalImage = null;      // 回传的电脑全屏原图（data URL），重裁始终基于它
         this.lastCropBoxData = null;    // 上次裁剪框，连刷题预填
         this.lastImageData = null;      // 上次送出的裁剪图，重解/换模型重答用
+        this.pendingImages = [];       // 当前题已保存的截图（不含正在裁剪的一张）
+        this.lastImages = [];          // 上次发送的完整图片列表，重解和追问共用
+        this.captureInFlight = false;
+        this.captureAsFollowup = false; // 解答后的截图补充到当前题，返回后才清空
         this.hasAnswer = false;         // 是否有一屏答案可返回（显式状态）
         this.autoFollow = true;         // 流式是否贴底跟随
         this.generating = false;
@@ -65,6 +69,7 @@ class SnapSolver {
         this.followupHint = this.el('followupHint');
         this.followupInput = this.el('followupInput');
         this.followupSend = this.el('followupSend');
+        this.followupCapture = this.el('followupCapture');
 
         this.initializeMarkdownTools();
         this.setupEventListeners();
@@ -121,6 +126,7 @@ class SnapSolver {
         this.socket.on('reconnect_failed', () => this.updateConnectionStatus(false));
 
         this.socket.on('screenshot_complete', data => {
+            this.captureInFlight = false;
             this.restoreCaptureBtn();
             if (data.success) {
                 this.originalImage = 'data:image/png;base64,' + data.image;
@@ -128,6 +134,7 @@ class SnapSolver {
             } else {
                 window.uiManager.showToast('截图失败: ' + (data.error || '未知错误'), 'error');
             }
+            this.refreshCaptureQueue();
         });
 
         this.socket.on('ai_response', data => this.handleAiResponse(data));
@@ -147,14 +154,31 @@ class SnapSolver {
 
     /* ---------- 截图触发 ---------- */
     triggerCapture() {
+        if (this.captureInFlight) return;
         if (!this.isConnected()) {
             window.uiManager.showToast('未连接到电脑，请确认电脑端程序已启动', 'error');
             return;
         }
+        this.captureInFlight = true;
+        this.refreshCaptureQueue();
         this.captureBtn.disabled = true;
         this.captureBtn.querySelector('i').className = 'fas fa-spinner fa-spin';
         if (this.captureBtnLabel) this.captureBtnLabel.textContent = '截取中…';
         this.socket.emit('capture_screenshot', {});
+    }
+
+    captureFollowup() {
+        if (this.generating || this.followupGenerating || this.captureInFlight) return;
+        if (!this.mainAnswerText) return;
+        if (this.lastImages.length >= 10) {
+            window.uiManager.showToast('本题已达到 10 张截图上限', 'error');
+            return;
+        }
+        this.captureAsFollowup = true;
+        this.pendingImages = [];
+        this.originalImage = null;
+        if (this.cropper) { this.cropper.destroy(); this.cropper = null; }
+        this.triggerCapture();
     }
 
     restoreCaptureBtn() {
@@ -168,6 +192,65 @@ class SnapSolver {
     openWorkspace() {
         this.setView('workspace');
         this.initializeCropper();
+        this.refreshCaptureQueue();
+    }
+
+    refreshCaptureQueue() {
+        const queue = this.el('captureQueue');
+        if (!queue) return;
+        queue.innerHTML = '';
+        queue.classList.toggle('hidden', !this.pendingImages.length);
+        this.pendingImages.forEach((src, index) => {
+            const item = document.createElement('div');
+            item.className = 'capture-queue-item';
+            const img = document.createElement('img');
+            img.src = src;
+            img.alt = `第 ${index + 1} 张截图`;
+            const label = document.createElement('span');
+            label.textContent = index + 1;
+            const remove = document.createElement('button');
+            remove.textContent = '×';
+            remove.setAttribute('aria-label', `删除第 ${index + 1} 张截图`);
+            remove.disabled = this.captureInFlight;
+            remove.addEventListener('click', () => {
+                this.pendingImages.splice(index, 1);
+                this.refreshCaptureQueue();
+            });
+            item.append(img, label, remove);
+            queue.appendChild(item);
+        });
+        const waiting = !this.originalImage;
+        this.el('nextCapturePanel').classList.toggle('hidden', !waiting);
+        this.cropArea.classList.toggle('hidden', waiting);
+        this.el('cropReset').disabled = waiting || this.captureInFlight;
+        const existingCount = this.captureAsFollowup ? this.lastImages.length : 0;
+        this.el('cropAddNext').disabled = waiting || this.captureInFlight || existingCount + this.pendingImages.length >= 9;
+        this.el('reshootBtn').disabled = this.captureInFlight;
+        this.el('nextCaptureBtn').disabled = this.captureInFlight;
+        this.el('cropSendToAI').disabled = this.captureInFlight || (waiting && !this.pendingImages.length);
+        this.el('workspaceExit').disabled = this.captureInFlight;
+        this.el('answerBack').disabled = this.captureInFlight;
+        this.followupCapture.disabled = this.captureInFlight || this.generating;
+        this.followupSend.disabled = this.captureInFlight;
+        this.followupInput.disabled = this.captureInFlight || this.followupGenerating;
+        const count = this.pendingImages.length + (waiting ? 0 : 1);
+        const action = this.captureAsFollowup ? '发送补充截图' : '发送解题';
+        this.el('cropSendToAI').textContent = `${action}${count ? `（${count} 张）` : ''}`;
+    }
+
+    addNextImage() {
+        const existingCount = this.captureAsFollowup ? this.lastImages.length : 0;
+        if (this.captureInFlight || !this.originalImage || existingCount + this.pendingImages.length >= 9) return;
+        try {
+            this.pendingImages.push(this.currentCropImage());
+        } catch (e) {
+            window.uiManager.showToast('处理图片出错: ' + e.message, 'error');
+            return;
+        }
+        if (this.cropper) { this.cropper.destroy(); this.cropper = null; }
+        this.originalImage = null;
+        this.cropSizeReadout.classList.add('hidden');
+        this.refreshCaptureQueue();
     }
 
     initializeCropper() {
@@ -186,7 +269,7 @@ class SnapSolver {
                 viewMode: 1,
                 dragMode: 'crop',        // 拖动即画新框
                 autoCrop: true,
-                autoCropArea: 0.6,
+                autoCropArea: 1,      // 首次截图默认选中整个屏幕，无需手动扩框
                 zoomable: true,
                 zoomOnTouch: true,
                 zoomOnWheel: true,
@@ -228,34 +311,55 @@ class SnapSolver {
     }
 
     exitWorkspace() {
+        if (this.captureInFlight) return;
         if (this.cropper) { this.cropper.destroy(); this.cropper = null; }
+        this.pendingImages = [];
+        this.captureAsFollowup = false;
+        this.originalImage = null;
         this.setView(this.hasAnswer ? 'answer' : 'empty');
     }
 
+    showQuestionImage(index) {
+        if (!this.lastImages.length) return;
+        this.lightboxIndex = (index + this.lastImages.length) % this.lastImages.length;
+        this.el('lightboxImg').src = this.lastImages[this.lightboxIndex];
+        this.el('lightboxCount').textContent = `${this.lightboxIndex + 1} / ${this.lastImages.length}`;
+        this.el('lightboxNav').classList.toggle('hidden', this.lastImages.length < 2);
+        this.el('lightbox').classList.remove('hidden');
+    }
+
     /* ---------- 发送解题 ---------- */
+    currentCropImage() {
+        if (this.cropper) {
+            this.lastCropBoxData = this.cropper.getCropBoxData();
+            const canvas = this.cropper.getCroppedCanvas({
+                maxWidth: 2560, maxHeight: 1440, fillColor: '#fff',
+                imageSmoothingEnabled: true, imageSmoothingQuality: 'high'
+            });
+            if (!canvas) throw new Error('无法生成裁剪图');
+            return canvas.toDataURL('image/png');
+        }
+        if (!this.originalImage) throw new Error('请先截图');
+        return this.originalImage;
+    }
+
     sendForSolve() {
-        let imageData;
+        if (this.captureInFlight) return;
         try {
-            if (this.cropper) {
-                this.lastCropBoxData = this.cropper.getCropBoxData();
-                const canvas = this.cropper.getCroppedCanvas({
-                    maxWidth: 2560, maxHeight: 1440, fillColor: '#fff',
-                    imageSmoothingEnabled: true, imageSmoothingQuality: 'high'
-                });
-                if (!canvas) throw new Error('无法生成裁剪图');
-                imageData = canvas.toDataURL('image/png');
-            } else {
-                imageData = this.originalImage;
-            }
+            const images = [...this.pendingImages];
+            if (this.originalImage) images.push(this.currentCropImage());
+            if (!images.length) return;
+            if (this.captureAsFollowup) this.sendFollowup(images);
+            else this.solveImage(images);
         } catch (e) {
             window.uiManager.showToast('处理图片出错: ' + e.message, 'error');
             return;
         }
-        this.solveImage(imageData);
     }
 
     // 统一发送入口：框选发送 / 重解 / 换模型重答 共用
     solveImage(imageData) {
+        const images = Array.isArray(imageData) ? imageData : [imageData];
         if (!this.isConnected()) {
             window.uiManager.showToast('连接已断开，等待重连后再试', 'error');
             return;
@@ -275,17 +379,19 @@ class SnapSolver {
             return;
         }
 
-        this.lastImageData = imageData;
-        if (this.questionThumbImg) this.questionThumbImg.src = imageData;
-        this.questionMeta.textContent = `${s.currentModel.display_name} · ${TIER_INFO[s.currentTier()]?.label || ''}`;
+        this.lastImages = [...images];
+        this.lastImageData = images[0];
+        this.pendingImages = [];
+        if (this.questionThumbImg) this.questionThumbImg.src = images[0];
+        this.questionMeta.textContent = `${s.currentModel.display_name} · ${TIER_INFO[s.currentTier()]?.label || ''}${images.length > 1 ? ` · ${images.length} 张图` : ''}`;
 
         this.enterAnswerView();
 
         const apiKeys = s.collectApiKeys();
-        const processed = imageData.startsWith('data:') ? imageData.split(',')[1] : imageData;
+        const processed = images.map(image => image.startsWith('data:') ? image.split(',')[1] : image);
         try {
             this.socket.emit('analyze_image', {
-                image: processed,
+                images: processed,
                 settings: { ...settings, apiKeys }
             });
         } catch (e) {
@@ -299,7 +405,7 @@ class SnapSolver {
         const before = s.currentModelId;
         await window.modelPage.open();
         if (s.currentModelId !== before && this.lastImageData) {
-            this.solveImage(this.lastImageData);
+            this.solveImage(this.lastImages);
         }
     }
 
@@ -404,9 +510,18 @@ class SnapSolver {
     /* ---------- 同题追问（设计 4a/4b/4c） ----------
        上下文 = 题图 + 原解答 + 问答链，共用当前模型与档位；
        历史由前端持有随请求上送，后端保持无状态。 */
-    sendFollowup() {
-        const q = this.followupInput.value.trim();
-        if (!q || this.generating || this.followupGenerating) return;
+    sendFollowup(newImages = []) {
+        const text = this.followupInput.value.trim();
+        const start = this.lastImages.length + 1;
+        const attachmentNote = newImages.length
+            ? `补充第 ${start} 至 ${start + newImages.length - 1} 张截图，请结合之前的题图和问答继续解答。`
+            : '';
+        const q = [text, attachmentNote].filter(Boolean).join('\n');
+        if (!q || this.generating || this.followupGenerating || this.captureInFlight) return;
+        if (this.lastImages.length + newImages.length > 10) {
+            window.uiManager.showToast('每题最多添加 10 张截图', 'error');
+            return;
+        }
         if (!this.isConnected()) {
             window.uiManager.showToast('连接已断开，等待重连后再试', 'error');
             return;
@@ -429,6 +544,13 @@ class SnapSolver {
         history.push({ role: 'user', content: q });
 
         const turn = this.appendFollowupTurn(q);
+        if (newImages.length) {
+            this.lastImages.push(...newImages);
+            this.pendingImages = [];
+            this.captureAsFollowup = false;
+            this.questionMeta.textContent = `${s.currentModel.display_name} · ${TIER_INFO[s.currentTier()]?.label || ''} · ${this.lastImages.length} 张图`;
+            this.setView('answer');
+        }
         this.followupTurns.push(turn);
         this.currentTurn = turn;
         this.followupInput.value = '';
@@ -440,10 +562,10 @@ class SnapSolver {
 
         const settings = s.getSettings();
         const apiKeys = s.collectApiKeys();
-        const processed = this.lastImageData.startsWith('data:') ? this.lastImageData.split(',')[1] : this.lastImageData;
+        const processed = this.lastImages.map(image => image.startsWith('data:') ? image.split(',')[1] : image);
         try {
             this.socket.emit('analyze_image', {
-                image: processed,
+                images: processed,
                 settings: { ...settings, apiKeys },
                 history
             });
@@ -576,6 +698,7 @@ class SnapSolver {
         this.followupGenerating = on;
         this.generating = on;                       // 复用贴底跟随/浮标的守卫
         this.followupInput.disabled = on;
+        this.followupCapture.disabled = on;
         this.followupSend.classList.toggle('stop', on);
         this.followupSend.innerHTML = on ? '<i class="fas fa-stop"></i>' : '<i class="fas fa-arrow-up"></i>';
         if (!on) this.jumpLatest?.classList.add('hidden');
@@ -604,6 +727,7 @@ class SnapSolver {
 
     setGenerating(on) {
         this.generating = on;
+        this.followupCapture.disabled = on;
         this.stopGenerationBtn?.classList.toggle('visible', on);
         if (on) this.answerActions.classList.remove('visible');
     }
@@ -637,7 +761,7 @@ class SnapSolver {
                 icon: 'fa-triangle-exclamation',
                 title: '解答失败',
                 hint: '模型服务返回了错误。可以直接重试一次，或换个模型再答。',
-                primary: { label: '重试', icon: 'fa-rotate-right', fn: () => this.lastImageData && this.solveImage(this.lastImageData) },
+                primary: { label: '重试', icon: 'fa-rotate-right', fn: () => this.lastImageData && this.solveImage(this.lastImages) },
             },
         }[kind];
 
@@ -669,7 +793,7 @@ class SnapSolver {
             b.addEventListener('click', fn);
             row.appendChild(b);
         };
-        if (kind !== 'other') addBtn('重试', 'fa-rotate-right', () => this.lastImageData && this.solveImage(this.lastImageData));
+        if (kind !== 'other') addBtn('重试', 'fa-rotate-right', () => this.lastImageData && this.solveImage(this.lastImages));
         addBtn('换个模型', 'fa-shuffle', () => this.switchModelAndRetry());
 
         this.responseContent.innerHTML = '';
@@ -710,16 +834,19 @@ class SnapSolver {
         this.captureBtn.addEventListener('click', () => this.triggerCapture());
         this.el('modelEntry').addEventListener('click', () => window.modelPage.open());
         this.el('cropSendToAI').addEventListener('click', () => this.sendForSolve());
+        this.el('cropAddNext').addEventListener('click', () => this.addNextImage());
+        this.el('nextCaptureBtn').addEventListener('click', () => this.triggerCapture());
         this.el('cropReset').addEventListener('click', () => this.cropper?.reset());
         this.el('reshootBtn').addEventListener('click', () => this.triggerCapture());
         this.el('workspaceExit').addEventListener('click', () => this.exitWorkspace());
         this.stopGenerationBtn.addEventListener('click', () => this.stopGeneration());
         this.el('answerBack').addEventListener('click', async () => {
+            if (this.captureInFlight) return;
             // 清空守卫：有追问记录时轻确认一次（设计 4c）
             if (this.followupTurns.length) {
                 const idx = await Sheets.confirm({
                     title: '离开后这页问答会清空',
-                    message: '返回首页或截新题后不会保留。',
+                    message: '返回首页后，本题截图和问答将清空。',
                     actions: [{ label: '继续看', style: 'cancel' }, { label: '离开', style: 'primary' }]
                 });
                 if (idx !== 1) return;
@@ -728,15 +855,21 @@ class SnapSolver {
             if (this.cropper) { this.cropper.destroy(); this.cropper = null; }
             this.hasAnswer = false;
             this.resetFollowups();
+            this.lastImages = [];
+            this.lastImageData = null;
+            this.originalImage = null;
+            this.pendingImages = [];
+            this.captureAsFollowup = false;
             this.setView('empty');
         });
 
         // 完成后的动作行（设计 4a：重解 / 换模型重解 / 复制）
-        this.el('resolveBtn').addEventListener('click', () => this.lastImageData && this.solveImage(this.lastImageData));
+        this.el('resolveBtn').addEventListener('click', () => this.lastImageData && this.solveImage(this.lastImages));
         this.el('switchModelBtn').addEventListener('click', () => this.switchModelAndRetry());
         this.el('copyAnswerBtn').addEventListener('click', () => this.copyText(this.mainAnswerText));
 
         // 同题追问输入条
+        this.followupCapture.addEventListener('click', () => this.captureFollowup());
         this.followupSend.addEventListener('click', () => {
             if (this.followupGenerating) this.stopGeneration();
             else this.sendFollowup();
@@ -757,9 +890,10 @@ class SnapSolver {
 
         // 题目缩略条 → 全屏对照
         this.el('questionThumb')?.addEventListener('click', () => {
-            const lb = this.el('lightbox'), img = this.el('lightboxImg');
-            if (this.lastImageData && lb && img) { img.src = this.lastImageData; lb.classList.remove('hidden'); }
+            this.showQuestionImage(0);
         });
+        this.el('lightboxPrev').addEventListener('click', () => this.showQuestionImage(this.lightboxIndex - 1));
+        this.el('lightboxNext').addEventListener('click', () => this.showQuestionImage(this.lightboxIndex + 1));
         this.el('lightboxClose')?.addEventListener('click', () => this.el('lightbox').classList.add('hidden'));
 
         this.setupScrollGuard();

@@ -33,6 +33,28 @@ class BaseModel(ABC):
         pass
 
     @staticmethod
+    def _image_list(image_data) -> list[str]:
+        """统一单图/多图输入，保留图片顺序。"""
+        images = image_data if isinstance(image_data, list) else [image_data]
+        if not images or any(not isinstance(item, str) or not item for item in images):
+            raise ValueError("图像数据不能为空")
+        return [item.split(',', 1)[1] if item.startswith('data:image') else item for item in images]
+
+    @staticmethod
+    def _image_mime(image: str) -> str:
+        return 'image/png' if image.startswith('iVBOR') else 'image/jpeg'
+
+    @classmethod
+    def _image_content(cls, image_data) -> list[dict]:
+        """OpenAI 兼容接口的图片内容块，单图与多图使用相同格式。"""
+        return [
+            {'type': 'image_url', 'image_url': {
+                'url': f'data:{cls._image_mime(image)};base64,{image}'
+            }}
+            for image in cls._image_list(image_data)
+        ]
+
+    @staticmethod
     def _text_history(history) -> list:
         """清洗追问历史：只保留 user/assistant 的非空纯文本轮次，其余丢弃。
         各子类在拼完首条带图消息后，把返回值按自家消息格式追加进 messages。"""

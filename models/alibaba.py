@@ -6,24 +6,32 @@ from .base import BaseModel
 class AlibabaModel(BaseModel):
     def __init__(self, api_key: str, temperature: float = 0.7, system_prompt: str = None, language: str = None, model_name: str = None, api_base_url: str = None, reasoning_tier: str = "deep"):
         # 如果没有提供模型名称，才使用默认值
-        self.model_name = model_name if model_name else "qwen3-vl-plus"
+        self.model_name = model_name if model_name else "qwen3.8-flash"
         print(f"初始化阿里巴巴模型: {self.model_name}")
         # 在super().__init__之前设置model_name，这样get_default_system_prompt能使用它
+        # 界面 High 的历史存储值为 deep，同时兼容直接传入 high。
+        if reasoning_tier == 'high':
+            reasoning_tier = 'deep'
         super().__init__(api_key, temperature, system_prompt, language, reasoning_tier=reasoning_tier)
         self.api_base_url = api_base_url  # 存储API基础URL
 
-    def _reasoning_extra_body(self) -> dict:
-        """将 fast/deep/max 映射为 DashScope 的 enable_thinking + thinking_budget。
-        qvq-max 等纯思考模型强制开启思考，且没有 fast 档。"""
-        model_id = self.get_model_identifier().lower()
-        tier = self.reasoning_tier
-        # 视觉推理专用模型不可关闭思考
-        thinking_only = "qvq" in model_id
-        if tier == 'fast' and not thinking_only:
-            return {'enable_thinking': False}
-        # deep=中等预算，max（及纯思考模型的 fast）=大预算
-        budget = 8192 if tier == 'deep' else 32768
-        return {'enable_thinking': True, 'thinking_budget': budget}
+    def _reasoning_kwargs(self) -> dict:
+        """将 Fast/High/Max 映射为百炼各模型的原生推理参数。
+
+        High 在项目中保存为 deep。reasoning_effort 与 thinking_budget
+        不可同时设置；none 会由服务端映射为关闭思考。
+        https://help.aliyun.com/zh/model-studio/qwen-api-via-openai-chat-completions/
+        """
+        if self.get_model_identifier() == 'deepseek-v4.1-flash':
+            if self.reasoning_tier == 'fast':
+                return {'extra_body': {'enable_thinking': False}}
+            effort = 'max' if self.reasoning_tier == 'max' else 'high'
+            return {
+                'reasoning_effort': effort,
+                'extra_body': {'enable_thinking': True},
+            }
+        effort_map = {'fast': 'none', 'deep': 'medium', 'max': 'xhigh'}
+        return {'reasoning_effort': effort_map[self.reasoning_tier]}
     
     def get_default_system_prompt(self) -> str:
         """根据模型名称返回不同的默认系统提示词"""
@@ -46,29 +54,19 @@ class AlibabaModel(BaseModel):
 
     def get_model_identifier(self) -> str:
         """根据模型名称返回对应的 DashScope API 标识符"""
-        # 新版模型 id 与 DashScope 调用名一致，直接透传
-        known = {"qwen3-vl-flash", "qwen3-vl-plus", "qvq-max"}
+        # API 调用名与配置一致，不将未知模型静默替换为其他模型。
+        known = {"qwen3.8-flash", "qwen3.8-max", "deepseek-v4.1-flash"}
         if self.model_name in known:
             return self.model_name
 
-        name = (self.model_name or "").lower()
-        if "qwen3-vl" in name:
-            if "flash" in name:
-                return "qwen3-vl-flash"
-            return "qwen3-vl-plus"
-        if "qvq" in name:
-            return "qvq-max"
-
-        # 兜底
-        print(f"警告：无法识别的阿里模型名称 {self.model_name}，默认使用 qwen3-vl-plus")
-        return "qwen3-vl-plus"
+        raise ValueError(f"不支持的阿里模型名称: {self.model_name}")
 
     def _is_thinking_model(self) -> bool:
         """当前模型是否会产生 reasoning_content（思考过程）"""
-        return self.reasoning_tier != 'fast' or 'qvq' in self.get_model_identifier().lower()
+        return self.reasoning_tier != 'fast'
 
     def analyze_text(self, text: str, proxies: dict = None) -> Generator[dict, None, None]:
-        """Stream QVQ-Max's response for text analysis"""
+        """Stream the model's response for text analysis"""
         try:
             # Initial status
             yield {"status": "started", "content": ""}
@@ -90,7 +88,7 @@ class AlibabaModel(BaseModel):
                 # Initialize OpenAI compatible client for DashScope
                 client = OpenAI(
                     api_key=self.api_key,
-                    base_url="https://dashscope.aliyuncs.com/compatible-mode/v1"
+                    base_url=self.api_base_url or "https://dashscope.aliyuncs.com/compatible-mode/v1"
                 )
 
                 # Prepare messages
@@ -112,7 +110,7 @@ class AlibabaModel(BaseModel):
                     temperature=self.temperature,
                     stream=True,
                     max_tokens=self._get_max_tokens(),
-                    extra_body=self._reasoning_extra_body()
+                    **self._reasoning_kwargs()
                 )
 
                 # 记录思考过程和回答
@@ -139,7 +137,7 @@ class AlibabaModel(BaseModel):
                             "content": reasoning_content,
                             "is_reasoning": True
                         }
-                    elif delta.content != "":
+                    elif delta.content:
                         # 判断是否开始回答（从思考过程切换到回答）
                         if not is_answering and has_thinking:
                             is_answering = True
@@ -205,7 +203,7 @@ class AlibabaModel(BaseModel):
                 # Initialize OpenAI compatible client for DashScope
                 client = OpenAI(
                     api_key=self.api_key,
-                    base_url="https://dashscope.aliyuncs.com/compatible-mode/v1"
+                    base_url=self.api_base_url or "https://dashscope.aliyuncs.com/compatible-mode/v1"
                 )
 
                 # 使用系统提供的系统提示词，不再自动添加语言指令
@@ -220,15 +218,10 @@ class AlibabaModel(BaseModel):
                     {
                         "role": "user",
                         "content": [
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/jpeg;base64,{image_data}"
-                                }
-                            },
+                            *self._image_content(image_data),
                             {
                                 "type": "text",
-                                "text": "请分析这个图片并提供详细的解答。"
+                                "text": "请结合全部图片分析并提供详细解答。这些图片属于同一道题，按顺序阅读，重叠内容不要重复计算。"
                             }
                         ]
                     }
@@ -245,7 +238,7 @@ class AlibabaModel(BaseModel):
                     temperature=self.temperature,
                     stream=True,
                     max_tokens=self._get_max_tokens(),
-                    extra_body=self._reasoning_extra_body()
+                    **self._reasoning_kwargs()
                 )
 
                 # 记录思考过程和回答
@@ -272,7 +265,7 @@ class AlibabaModel(BaseModel):
                             "content": reasoning_content,
                             "is_reasoning": True
                         }
-                    elif delta.content != "":
+                    elif delta.content:
                         # 判断是否开始回答（从思考过程切换到回答）
                         if not is_answering and has_thinking:
                             is_answering = True
@@ -317,4 +310,4 @@ class AlibabaModel(BaseModel):
 
     def _get_max_tokens(self) -> int:
         """返回合适的 max_tokens 值"""
-        return self.max_tokens if hasattr(self, 'max_tokens') and self.max_tokens else 4000 
+        return self.max_tokens if hasattr(self, 'max_tokens') and self.max_tokens else 4000

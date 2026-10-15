@@ -124,35 +124,35 @@
             "defaultTier": "fast",
             "description": "稳定版快速模型，低延迟高吞吐"
         },
-        "qwen3-vl-flash": {
-            "name": "Qwen3-VL Flash",
+        "qwen3.8-flash": {
+            "name": "Qwen3.8 Flash",
             "provider": "alibaba",
             "supportsMultimodal": true,
             "isReasoning": true,
             "version": "latest",
             "reasoningTiers": ["fast", "deep", "max"],
             "defaultTier": "fast",
-            "description": "通义千问3 视觉版极速档，中文场景友好"
+            "description": "通义千问3.8 快速多模态模型，兼顾截图理解、推理与成本"
         },
-        "qwen3-vl-plus": {
-            "name": "Qwen3-VL Plus",
+        "qwen3.8-max": {
+            "name": "Qwen3.8 Max",
             "provider": "alibaba",
             "supportsMultimodal": true,
             "isReasoning": true,
             "version": "latest",
             "reasoningTiers": ["fast", "deep", "max"],
             "defaultTier": "deep",
-            "description": "通义千问3 视觉版均衡档，可开启深度思考"
+            "description": "通义千问3.8 旗舰多模态模型，适合复杂截图与多步推理"
         },
-        "qvq-max": {
-            "name": "QVQ-Max",
+        "deepseek-v4.1-flash": {
+            "name": "DeepSeek V4.1 Flash（百炼）",
             "provider": "alibaba",
             "supportsMultimodal": true,
             "isReasoning": true,
             "version": "latest",
-            "reasoningTiers": ["deep", "max"],
+            "reasoningTiers": ["fast", "deep", "max"],
             "defaultTier": "deep",
-            "description": "视觉推理专用模型，擅长看图做数理推理"
+            "description": "百炼托管的 DeepSeek 多模态模型，支持截图解题，使用百炼 API Key"
         },
         "doubao-seed-1-6-250615": {
             "name": "Doubao-Seed-1.6",

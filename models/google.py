@@ -211,17 +211,13 @@ class GoogleModel(BaseModel):
                 else:
                     prompt_parts.append("请分析这张图片并提供详细解答。")
                 
-                # 处理图像数据
-                if image_data.startswith('data:image'):
-                    # 如果是data URI，提取base64部分
-                    image_data = image_data.split(',', 1)[1]
-                
-                # 使用genai的特定方法处理图像
-                image_part = {
-                    "mime_type": "image/jpeg",
-                    "data": base64.b64decode(image_data)
-                }
-                prompt_parts.append(image_part)
+                # 多张截图按顺序作为同一题的输入。
+                prompt_parts.append("请结合全部图片解答同一道题，按顺序阅读，重叠内容不要重复计算。")
+                for image in self._image_list(image_data):
+                    prompt_parts.append({
+                        "mime_type": self._image_mime(image),
+                        "data": base64.b64decode(image)
+                    })
 
                 # 同题追问：改用多轮 contents（assistant → model），无历史时保持单轮 parts
                 turns = self._text_history(history)

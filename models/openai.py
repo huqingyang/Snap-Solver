@@ -156,15 +156,10 @@ class OpenAIModel(BaseModel):
                     {
                         "role": "user",
                         "content": [
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/jpeg;base64,{image_data}"
-                                }
-                            },
+                            *self._image_content(image_data),
                             {
                                 "type": "text",
-                                "text": "Please analyze this image and provide a detailed solution."
+                                "text": "Analyze all images together as one question, in order. Do not double-count overlapping content. Provide a detailed solution."
                             }
                         ]
                     }

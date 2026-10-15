@@ -478,7 +478,21 @@ body[data-view="answer"] .app-topbar { display: none; }
     background: linear-gradient(rgba(14, 12, 10, 0), rgba(14, 12, 10, 0.92) 40%);
     margin-top: -60px;
     flex-shrink: 0;
+    flex-wrap: wrap;
 }
+.workspace-toolbar #cropAddNext { flex: 1; color: #3ec99a; border: 1px solid #332c22; }
+.workspace-toolbar #cropSendToAI { flex-basis: 100%; }
+.workspace-toolbar button:disabled { background: #1f1b16; opacity: 0.45; }
+.next-capture-panel { position: absolute; inset: 70px 20px 90px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; color: #eee; text-align: center; }
+.next-capture-panel p { margin: 0; font-weight: 600; }
+.next-capture-panel span { color: #a79c8b; font-size: 14px; line-height: 1.7; }
+.capture-queue { display: flex; gap: 10px; overflow-x: auto; flex-shrink: 0; padding: 10px 20px 65px; }
+.capture-queue-item { position: relative; flex-shrink: 0; }
+.capture-queue-item img { width: 80px; height: 58px; object-fit: contain; background: #1f1b16; border: 1px solid #332c22; border-radius: 6px; }
+.capture-queue-item button { position: absolute; top: -6px; right: -6px; width: 28px; height: 28px; border-radius: 50%; background: #332c22; color: #fff; }
+.capture-queue-item span { position: absolute; bottom: 3px; left: 4px; color: #fff; background: #1f1b16; font-size: 11px; }
+.lightbox-nav { position: absolute; bottom: calc(var(--safe-bottom) + 20px); left: 0; right: 0; display: flex; gap: 16px; align-items: center; justify-content: center; color: #fff; }
+.lightbox-nav .btn { color: #fff; background: #332c22; }
 .workspace-toolbar .btn-square { background: #1f1b16; border-color: #332c22; color: #a79c8b; }
 .workspace-toolbar .btn-primary { flex: 1; min-height: 52px; background: #3ec99a; color: #10241c; }
 .workspace-toolbar .btn-primary:active { background: #34b285; }

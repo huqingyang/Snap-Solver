@@ -222,17 +222,17 @@ class AnthropicModel(BaseModel):
             'messages': [{
                 'role': 'user',
                 'content': [
-                    {
+                    *[{
                         'type': 'image',
                         'source': {
                             'type': 'base64',
-                            'media_type': 'image/png',
-                            'data': image_data
+                            'media_type': self._image_mime(image),
+                            'data': image
                         }
-                    },
+                    } for image in self._image_list(image_data)],
                     {
                         'type': 'text',
-                        'text': "请分析这个问题并提供详细的解决方案。如果你看到多个问题，请逐一解决。"
+                        'text': "请按顺序结合全部图片分析并解答。这些图片可能属于同一道题，重叠内容不要重复计算；如果有多个问题，请逐一解决。"
                     }
                 ]
             }]

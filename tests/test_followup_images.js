@@ -1,0 +1,136 @@
+// Run with: node --test tests/test_followup_images.js
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+
+function createApp() {
+    class Element {
+        constructor() {
+            this.value = '';
+            this.dataset = {};
+            this.style = {};
+            this.children = [];
+            this.listeners = {};
+            this.classList = { add() {}, remove() {}, toggle() {} };
+        }
+        addEventListener(name, fn) { this.listeners[name] = fn; }
+        querySelector() { return new Element(); }
+        querySelectorAll() { return []; }
+        append(...items) { this.children.push(...items); }
+        appendChild(item) { this.children.push(item); }
+        setAttribute(name, value) { this[name] = value; }
+        getAttribute(name) { return this[name]; }
+        scrollTo() {}
+    }
+    const elements = new Map();
+    const element = id => {
+        if (!elements.has(id)) elements.set(id, new Element());
+        return elements.get(id);
+    };
+    const handlers = {};
+    const emitted = [];
+    const socket = {
+        connected: true,
+        on(name, fn) { handlers[name] = fn; },
+        emit(name, data) { emitted.push({ name, data }); },
+    };
+    const settings = {
+        currentModel: { provider: 'alibaba', display_name: 'Qwen3.8 Flash' },
+        currentTier: () => 'fast',
+        hasKeyFor: () => true,
+        addEventListener() {},
+        missingKeyForCurrentModel: () => null,
+        getSettings: () => ({ model: 'qwen3.8-flash' }),
+        collectApiKeys: () => ({}),
+    };
+    const context = vm.createContext({
+        console,
+        window: { settingsManager: settings, uiManager: { showToast() {} } },
+        document: {
+            body: element('body'),
+            getElementById: element,
+            querySelector: element,
+            createElement: () => new Element(),
+            addEventListener() {},
+        },
+        io: () => socket,
+        TIER_INFO: { fast: { label: 'Fast' } },
+        PROVIDER_TAB: { alibaba: '通义' },
+        Sheets: { confirm: async () => 1 },
+        requestAnimationFrame: () => 1,
+        Cropper: class {
+            constructor(img) { this.image = img.src; }
+            destroy() {}
+            getCropBoxData() { return {}; }
+            getCroppedCanvas() { return { toDataURL: () => this.image }; }
+        },
+    });
+    vm.runInContext(fs.readFileSync('static/js/main.js', 'utf8') + '\nglobalThis.App = SnapSolver;', context);
+    const app = new context.App();
+    app.initialize();
+    return {
+        app, elements, emitted,
+        screenshot: image => handlers.screenshot_complete({ success: true, image }),
+        complete: content => app.handleAiResponse({ status: 'completed', content }),
+        request: () => emitted.filter(e => e.name === 'analyze_image').at(-1).data,
+    };
+}
+
+test('screenshots after an answer extend the question and retain earlier follow-ups', async () => {
+    const { app, elements, screenshot, complete, request } = createApp();
+    screenshot('first');
+    app.sendForSolve();
+    complete('Original answer');
+    app.followupInput.value = 'Explain the formula';
+    app.sendFollowup();
+    complete('Formula explanation');
+
+    app.followupInput.value = 'Here is the rest';
+    app.captureFollowup();
+    screenshot('second');
+    app.sendForSolve();
+    assert.equal(app.mainAnswerText, 'Original answer');
+    assert.equal(app.followupTurns.length, 2);
+    assert.equal(app.followupTurns[0].answerText, 'Formula explanation');
+    assert.deepEqual(Array.from(request().images), ['first', 'second']);
+    assert.deepEqual(Array.from(request().history, t => t.content).slice(0, 3), [
+        'Original answer', 'Explain the formula', 'Formula explanation',
+    ]);
+    assert.match(request().history.at(-1).content, /Here is the rest/);
+    assert.match(request().history.at(-1).content, /第 2 至 2 张/);
+    assert.equal(app.view, 'answer');
+    complete('Answer using both images');
+
+    // Subsequent text-only questions still carry every image.
+    app.followupInput.value = 'Check again';
+    app.sendFollowup();
+    assert.deepEqual(Array.from(request().images), ['first', 'second']);
+    complete('Checked');
+
+    await elements.get('answerBack').listeners.click();
+    assert.equal(app.view, 'empty');
+    assert.equal(app.lastImages.length, 0);
+    assert.equal(app.followupTurns.length, 0);
+    screenshot('new-question');
+    app.sendForSolve();
+    assert.deepEqual(Array.from(request().images), ['new-question']);
+    assert.equal(request().history, undefined);
+});
+
+test('canceling supplemental capture preserves the existing question', () => {
+    const { app, screenshot, complete, request } = createApp();
+    screenshot('first');
+    app.sendForSolve();
+    complete('Original answer');
+    app.captureFollowup();
+    screenshot('discarded');
+    app.addNextImage();
+    app.exitWorkspace();
+    assert.equal(app.mainAnswerText, 'Original answer');
+    assert.equal(app.pendingImages.length, 0);
+    assert.deepEqual(Array.from(app.lastImages), ['data:image/png;base64,first']);
+    app.followupInput.value = 'Continue';
+    app.sendFollowup();
+    assert.deepEqual(Array.from(request().images), ['first']);
+});

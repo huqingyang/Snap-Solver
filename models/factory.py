@@ -267,6 +267,11 @@ class ModelFactory:
     def is_multimodal(cls, model_name: str) -> bool:
         """判断模型是否支持多模态输入"""
         return cls._models.get(model_name, {}).get('is_multimodal', False)
+
+    @classmethod
+    def get_model_provider(cls, model_name: str) -> Optional[str]:
+        """返回配置中的服务提供商，区分百炼托管与厂商直连接口。"""
+        return cls._models.get(model_name, {}).get('provider_id')
     
     @classmethod
     def is_reasoning(cls, model_name: str) -> bool:

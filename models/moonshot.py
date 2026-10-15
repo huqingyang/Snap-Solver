@@ -147,16 +147,13 @@ class MoonshotModel(BaseModel):
 
                 client = OpenAI(api_key=self.api_key, base_url=self.api_base_url)
 
-                if image_data.startswith('data:image'):
-                    image_data = image_data.split(',', 1)[1]
-
                 messages = [
                     {"role": "system", "content": self.system_prompt},
                     {
                         "role": "user",
                         "content": [
-                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_data}"}},
-                            {"type": "text", "text": "请分析这个图片并提供详细的解答。"}
+                            *self._image_content(image_data),
+                            {"type": "text", "text": "请按顺序结合全部图片解答同一道题，重叠内容不要重复计算。"}
                         ]
                     }
                 ]

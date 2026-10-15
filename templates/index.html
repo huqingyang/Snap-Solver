@@ -126,8 +126,9 @@
 
         <!-- 同题追问输入条：仅完成态出现（设计 4a/4b） -->
         <div class="followup-bar hidden" id="followupBar">
-            <div class="followup-hint" id="followupHint">追问仅围绕本题 · 返回或换题后清空</div>
+            <div class="followup-hint" id="followupHint">可继续提问或补充截图 · 返回后开始新题</div>
             <div class="followup-input-row">
+                <button class="followup-send" id="followupCapture" aria-label="补充截图" title="为本题补充截图"><i class="fas fa-camera"></i></button>
                 <input type="text" id="followupInput" placeholder="答案没看懂？就这道题继续问…" autocomplete="off" enterkeyhint="send" />
                 <button class="followup-send" id="followupSend" aria-label="发送追问"><i class="fas fa-arrow-up"></i></button>
             </div>
@@ -138,13 +139,20 @@
     <div class="view view-workspace" id="workspace">
         <div class="workspace-stage">
             <div class="crop-area"></div>
+            <div class="next-capture-panel hidden" id="nextCapturePanel">
+                <p>当前截图已添加</p>
+                <span>在电脑上翻页或滚动到下一部分，再继续截图。<br>信息已完整，也可以直接发送解题。</span>
+                <button class="btn btn-primary" id="nextCaptureBtn"><i class="fas fa-camera"></i> 截取下一张</button>
+            </div>
             <button class="workspace-exit" id="workspaceExit"><i class="fas fa-xmark"></i> 退出</button>
             <div class="workspace-hint">电脑整屏截图<br>双指缩放查看</div>
             <div class="crop-size-readout hidden" id="cropSizeReadout"></div>
         </div>
+        <div class="capture-queue hidden" id="captureQueue" aria-label="已添加的截图"></div>
         <div class="workspace-toolbar">
             <button class="btn-square" id="cropReset"><i class="fas fa-arrows-rotate"></i><span>重置框</span></button>
             <button class="btn-square" id="reshootBtn"><i class="fas fa-camera-rotate"></i><span>重截</span></button>
+            <button class="btn btn-ghost" id="cropAddNext"><i class="fas fa-plus"></i> 添加下一张</button>
             <button class="btn btn-primary" id="cropSendToAI"><i class="fas fa-paper-plane"></i> 发送解题</button>
         </div>
     </div>
@@ -174,6 +182,11 @@
     <div class="lightbox hidden" id="lightbox">
         <button class="btn btn-icon lightbox-close" id="lightboxClose" aria-label="关闭"><i class="fas fa-xmark"></i></button>
         <img id="lightboxImg" alt="题目全屏" />
+        <div class="lightbox-nav hidden" id="lightboxNav">
+            <button class="btn btn-ghost" id="lightboxPrev">上一张</button>
+            <span id="lightboxCount"></span>
+            <button class="btn btn-ghost" id="lightboxNext">下一张</button>
+        </div>
     </div>
 
     <!-- ============ 唯一弹层宿主（Sheets 管理器动态挂载） ============ -->
