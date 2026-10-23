@@ -13,6 +13,10 @@
 }
 
 /* -------- 更新提示条（accent 软底卡） -------- */
+.auto-capture-status { position: fixed; right: 16px; bottom: calc(var(--safe-bottom) + 100px); z-index: 46; max-width: calc(100vw - 32px); padding: 12px 16px; border: 1px solid var(--accent); border-radius: var(--r-pill); background: var(--bg-elevated); color: var(--text); font-size: 12px; box-shadow: 0 2px 12px #0002; }
+.auto-capture-settings { padding: 20px; }
+.auto-capture-settings p { color: var(--text-2); font-size: 14px; line-height: 1.7; margin-bottom: 16px; }
+.auto-capture-settings input { width: 100%; padding: 12px; background: var(--bg-elevated); color: var(--text); border: 1px solid var(--edge); border-radius: var(--r-btn); }
 .update-banner {
     margin: 14px var(--sp-5) 0;
     background: var(--accent-soft);

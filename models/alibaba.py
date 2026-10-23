@@ -22,7 +22,7 @@ class AlibabaModel(BaseModel):
         不可同时设置；none 会由服务端映射为关闭思考。
         https://help.aliyun.com/zh/model-studio/qwen-api-via-openai-chat-completions/
         """
-        if self.get_model_identifier() == 'deepseek-v4.1-flash':
+        if self.get_model_identifier() == 'deepseek-v4.1-flash-1017':
             if self.reasoning_tier == 'fast':
                 return {'extra_body': {'enable_thinking': False}}
             effort = 'max' if self.reasoning_tier == 'max' else 'high'
@@ -55,7 +55,7 @@ class AlibabaModel(BaseModel):
     def get_model_identifier(self) -> str:
         """根据模型名称返回对应的 DashScope API 标识符"""
         # API 调用名与配置一致，不将未知模型静默替换为其他模型。
-        known = {"qwen3.8-flash", "qwen3.8-max", "deepseek-v4.1-flash"}
+        known = {"qwen3.8-flash", "qwen3.8-max", "deepseek-v4.1-flash-1017"}
         if self.model_name in known:
             return self.model_name
 
@@ -221,7 +221,7 @@ class AlibabaModel(BaseModel):
                             *self._image_content(image_data),
                             {
                                 "type": "text",
-                                "text": "请结合全部图片分析并提供详细解答。这些图片属于同一道题，按顺序阅读，重叠内容不要重复计算。"
+                                "text": "请结合全部图片作答，遵循系统提示词要求的输出格式和详略。这些图片属于同一道题，按顺序阅读，重叠内容不要重复计算。"
                             }
                         ]
                     }

@@ -53,6 +53,7 @@ class SettingsPage {
             case 'keys': this.titleEl.textContent = 'API 密钥'; this.renderKeys(); break;
             case 'prompts': this.titleEl.textContent = '提示词模式'; this.renderPrompts(); break;
             case 'network': this.titleEl.textContent = '网络'; this.renderNetwork(); break;
+            case 'autoCapture': this.titleEl.textContent = '自动截屏'; this.renderAutoCapture(); break;
             default: this.titleEl.textContent = '设置'; this.renderNav();
         }
     }
@@ -108,6 +109,11 @@ class SettingsPage {
                 onClick: () => this.show('prompts')
             }),
             this.navRow({ icon: 'fa-language', label: '回复语言', value: s._language, onClick: () => this.openLanguageSheet() }),
+            this.navRow({
+                icon: 'fa-clock', label: '自动截屏',
+                value: window.app?.autoCaptureTimer ? `每 ${window.app.autoCaptureInterval} 秒` : '已关闭',
+                onClick: () => this.show('autoCapture')
+            }),
         ));
 
         wrap.appendChild(this.sectionLabel('模型接入'));
@@ -134,6 +140,34 @@ class SettingsPage {
                 onClick: () => this.openAboutSheet()
             }),
         ));
+    }
+
+    renderAutoCapture() {
+        const app = window.app;
+        const panel = document.createElement('div');
+        panel.className = 'auto-capture-settings';
+        panel.innerHTML = `
+            <div class="form-field">
+                <label for="autoCaptureSeconds">截图间隔（秒）</label>
+                <input id="autoCaptureSeconds" type="number" min="1" max="86400" step="1" inputmode="numeric" />
+            </div>
+            <p>开启后按间隔截取电脑全屏并自动发送解题，每次都开始新题，替换当前题目和问答。</p>
+            <p>正在生成、裁剪或输入追问时跳过本次截图。保持页面打开；浏览器后台或设备休眠时可能延迟。刷新页面后默认关闭。自动解题会按模型用量消耗额度。</p>
+            <button class="btn btn-primary" id="autoCaptureToggle"></button>`;
+        const input = panel.querySelector('#autoCaptureSeconds');
+        input.value = app.autoCaptureInterval;
+        const button = panel.querySelector('#autoCaptureToggle');
+        button.textContent = app.autoCaptureTimer ? '关闭自动截屏' : '开启自动截屏';
+        input.disabled = !!app.autoCaptureTimer;
+        button.addEventListener('click', () => {
+            if (app.autoCaptureTimer) app.stopAutoCapture();
+            else if (app.startAutoCapture(input.value)) {
+                this.close();
+                window.uiManager.showToast(`自动截屏已开启，${app.autoCaptureInterval} 秒后开始`, 'success');
+            }
+            this.render();
+        });
+        this.scrollEl.appendChild(panel);
     }
 
     /* ---------- 二级页：API 密钥，就地展开编辑（3b） ---------- */

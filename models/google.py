@@ -207,9 +207,9 @@ class GoogleModel(BaseModel):
                 
                 # 添加默认图像分析指令
                 if self.language and self.language != 'auto':
-                    prompt_parts.append(f"请使用{self.language}分析这张图片并提供详细解答。")
+                    prompt_parts.append(f"请使用{self.language}阅读图片并按系统提示词规定的格式和详略作答。")
                 else:
-                    prompt_parts.append("请分析这张图片并提供详细解答。")
+                    prompt_parts.append("请阅读图片并按系统提示词规定的格式和详略作答。")
                 
                 # 多张截图按顺序作为同一题的输入。
                 prompt_parts.append("请结合全部图片解答同一道题，按顺序阅读，重叠内容不要重复计算。")

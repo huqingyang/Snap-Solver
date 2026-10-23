@@ -159,7 +159,7 @@ class OpenAIModel(BaseModel):
                             *self._image_content(image_data),
                             {
                                 "type": "text",
-                                "text": "Analyze all images together as one question, in order. Do not double-count overlapping content. Provide a detailed solution."
+                                "text": "Analyze all images together as one question, in order. Do not double-count overlapping content. Follow the system prompt for answer format and detail."
                             }
                         ]
                     }

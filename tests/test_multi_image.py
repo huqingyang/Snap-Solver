@@ -16,10 +16,35 @@ HISTORY = [{'role': 'assistant', 'content': '上一轮答案'},
 
 
 class MultiImageTests(unittest.TestCase):
+    def test_bailian_deepseek_snapshot_and_reasoning_parameters(self):
+        from models.factory import ModelFactory
+
+        model_id = 'deepseek-v4.1-flash-1017'
+        self.assertEqual(ModelFactory.get_model_provider(model_id), 'alibaba')
+        for tier, expected in (
+            ('fast', {'extra_body': {'enable_thinking': False}}),
+            ('deep', {'reasoning_effort': 'high', 'extra_body': {'enable_thinking': True}}),
+            ('max', {'reasoning_effort': 'max', 'extra_body': {'enable_thinking': True}}),
+        ):
+            with self.subTest(tier=tier):
+                model = ModelFactory.create_model(model_id, 'offline', reasoning_tier=tier)
+                self.assertIsInstance(model, AlibabaModel)
+                for method, value in ((model.analyze_text, 'hello'), (model.analyze_image, IMAGES)):
+                    client = MagicMock()
+                    client.chat.completions.create.return_value = []
+                    with patch('models.alibaba.OpenAI', return_value=client):
+                        list(method(value))
+                    kwargs = client.chat.completions.create.call_args.kwargs
+                    self.assertEqual(kwargs['model'], model_id)
+                    for key, val in expected.items():
+                        self.assertEqual(kwargs[key], val)
+                    if tier == 'fast':
+                        self.assertNotIn('reasoning_effort', kwargs)
+
     def test_openai_compatible_providers_keep_order_and_history(self):
         for module, model in (
             ('alibaba', AlibabaModel('offline', model_name='qwen3.8-flash')),
-            ('alibaba', AlibabaModel('offline', model_name='deepseek-v4.1-flash')),
+            ('alibaba', AlibabaModel('offline', model_name='deepseek-v4.1-flash-1017')),
             ('openai', OpenAIModel('offline')),
             ('moonshot', MoonshotModel('offline')),
         ):

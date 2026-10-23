@@ -39,7 +39,9 @@ const TIER_INFO = {
 };
 
 // 随仓库分发的内置提示词 id（用于设置页 内置/自建 分组，内置不可删）
-const BUILTIN_PROMPT_IDS = ['a_default', 'default', 'single_choice', 'multiple_choice', 'programming', 'ACM_hard', 'pattern_reasoning', 'chart_calculation'];
+const DEFAULT_PROMPT_ID = 'beisen_finance';
+const DEFAULT_PROMPT_VERSION = 'beisen-finance-v1';
+const BUILTIN_PROMPT_IDS = ['beisen_finance', 'niuke_python', 'a_default', 'default', 'single_choice', 'multiple_choice', 'programming', 'ACM_hard', 'pattern_reasoning', 'chart_calculation'];
 
 // 开源仓库（主页页脚与设置页共用的单一出处）
 const REPO = { name: 'Zippland/Snap-Solver', url: 'https://github.com/Zippland/Snap-Solver' };
@@ -100,13 +102,23 @@ class SettingsManager extends EventTarget {
         let saved = {};
         try { saved = JSON.parse(localStorage.getItem('snapSettings') || '{}'); } catch (e) {}
         this._tier = ['fast', 'deep', 'max'].includes(saved.tier) ? saved.tier : 'deep';
-        this.currentPromptId = (saved.promptId && this.prompts[saved.promptId]) ? saved.promptId : (Object.keys(this.prompts)[0] || null);
+        const defaultPrompt = this.prompts[DEFAULT_PROMPT_ID] ? DEFAULT_PROMPT_ID : (Object.keys(this.prompts)[0] || null);
+        this.currentPromptId = (saved.promptId && this.prompts[saved.promptId]) ? saved.promptId : defaultPrompt;
+        // 本次更新切换一次默认提示词，之后尊重用户手动选择。
+        this._defaultPromptVersion = saved.defaultPromptVersion;
+        if (this.prompts[DEFAULT_PROMPT_ID] && saved.defaultPromptVersion !== DEFAULT_PROMPT_VERSION) {
+            this.currentPromptId = DEFAULT_PROMPT_ID;
+            this._defaultPromptVersion = DEFAULT_PROMPT_VERSION;
+        }
         this._language = saved.language || '中文';
         this._proxyEnabled = !!saved.proxyEnabled;
         this._proxyHost = saved.proxyHost || '127.0.0.1';
         this._proxyPort = parseInt(saved.proxyPort || 4780, 10);
-        this.currentModel = this.models.find(m => m.id === saved.model) || this.models[0] || null;
+        const savedModel = saved.model === 'deepseek-v4.1-flash'
+            ? 'deepseek-v4.1-flash-1017' : saved.model;
+        this.currentModel = this.models.find(m => m.id === savedModel) || this.models[0] || null;
         this.currentModelId = this.currentModel ? this.currentModel.id : null;
+        if (this._defaultPromptVersion !== saved.defaultPromptVersion || savedModel !== saved.model) this.persist();
     }
 
     persist() {
@@ -114,6 +126,7 @@ class SettingsManager extends EventTarget {
             model: this.currentModelId,
             tier: this._tier,
             promptId: this.currentPromptId,
+            defaultPromptVersion: this._defaultPromptVersion,
             language: this._language,
             proxyEnabled: this._proxyEnabled,
             proxyHost: this._proxyHost,
@@ -270,7 +283,7 @@ class SettingsManager extends EventTarget {
     async deletePrompt(id) {
         await fetch('/api/prompts/' + encodeURIComponent(id), { method: 'DELETE' });
         delete this.prompts[id];
-        if (this.currentPromptId === id) this.currentPromptId = Object.keys(this.prompts)[0] || null;
+        if (this.currentPromptId === id) this.currentPromptId = this.prompts[DEFAULT_PROMPT_ID] ? DEFAULT_PROMPT_ID : (Object.keys(this.prompts)[0] || null);
         this.persist();
         this.emitChange('prompts');
     }

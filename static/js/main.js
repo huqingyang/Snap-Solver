@@ -19,6 +19,14 @@ class SnapSolver {
         this.lastImages = [];          // 上次发送的完整图片列表，重解和追问共用
         this.captureInFlight = false;
         this.captureAsFollowup = false; // 解答后的截图补充到当前题，返回后才清空
+        this.autoCaptureTimer = null;
+        this.autoCaptureInterval = 30;
+        this.autoCaptureEpoch = 0;
+        this.autoCaptureRequest = null;
+        try {
+            const seconds = Number(localStorage.getItem('autoCaptureInterval'));
+            if (Number.isInteger(seconds) && seconds >= 1 && seconds <= 86400) this.autoCaptureInterval = seconds;
+        } catch (e) {}
         this.hasAnswer = false;         // 是否有一屏答案可返回（显式状态）
         this.autoFollow = true;         // 流式是否贴底跟随
         this.generating = false;
@@ -126,8 +134,28 @@ class SnapSolver {
         this.socket.on('reconnect_failed', () => this.updateConnectionStatus(false));
 
         this.socket.on('screenshot_complete', data => {
+            const autoEpoch = this.autoCaptureRequest;
+            this.autoCaptureRequest = null;
             this.captureInFlight = false;
             this.restoreCaptureBtn();
+            if (autoEpoch !== null) {
+                // 已关闭或重启自动模式时，丢弃上一轮尚未回传的自动截图。
+                if (!this.autoCaptureTimer || autoEpoch !== this.autoCaptureEpoch) {
+                    this.refreshCaptureQueue();
+                    return;
+                }
+                if (data.success) {
+                    this.captureAsFollowup = false;
+                    if (this.cropper) { this.cropper.destroy(); this.cropper = null; }
+                    this.originalImage = 'data:image/png;base64,' + data.image;
+                    this.solveImage([this.originalImage]);
+                } else {
+                    this.stopAutoCapture();
+                    window.uiManager.showToast('自动截图失败，已停止：' + (data.error || '未知错误'), 'error');
+                }
+                this.refreshCaptureQueue();
+                return;
+            }
             if (data.success) {
                 this.originalImage = 'data:image/png;base64,' + data.image;
                 this.openWorkspace();
@@ -141,6 +169,7 @@ class SnapSolver {
     }
 
     updateConnectionStatus(connected) {
+        if (!connected) this.stopAutoCapture();
         this.connectionText.textContent = connected ? '已连接 · 电脑端' : '未连接';
         this.connectionStatus.classList.toggle('ok', connected);
         this.connectionStatus.classList.toggle('warn', !connected);
@@ -151,6 +180,51 @@ class SnapSolver {
     }
 
     isConnected() { return this.socket && this.socket.connected; }
+
+    /* ---------- 定时全屏截图：每次独立解题，不携带上一题历史 ---------- */
+    startAutoCapture(seconds) {
+        seconds = Number(seconds);
+        if (!Number.isInteger(seconds) || seconds < 1 || seconds > 86400) {
+            window.uiManager.showToast('请输入 1 至 86400 的整数秒数', 'error');
+            return false;
+        }
+        if (!this.isConnected()) {
+            window.uiManager.showToast('请先连接电脑端', 'error');
+            return false;
+        }
+        const s = window.settingsManager;
+        if (!s.getSettings().model || s.missingKeyForCurrentModel()) {
+            window.modelPage.open({ focusKey: true });
+            return false;
+        }
+        this.stopAutoCapture();
+        this.autoCaptureInterval = seconds;
+        try { localStorage.setItem('autoCaptureInterval', String(seconds)); } catch (e) {}
+        this.autoCaptureTimer = setInterval(() => this.runAutoCapture(), seconds * 1000);
+        this.el('autoCaptureStatus').textContent = `自动截屏 · 每 ${seconds} 秒 · 点击停止`;
+        this.el('autoCaptureStatus').classList.remove('hidden');
+        return true;
+    }
+
+    stopAutoCapture() {
+        if (this.autoCaptureTimer !== null) clearInterval(this.autoCaptureTimer);
+        this.autoCaptureTimer = null;
+        this.autoCaptureEpoch += 1;
+        this.el('autoCaptureStatus')?.classList.add('hidden');
+    }
+
+    runAutoCapture() {
+        if (!this.autoCaptureTimer) return;
+        if (!this.isConnected()) { this.stopAutoCapture(); return; }
+        // 用户正在裁剪、追问或调整设置时，不抢占当前操作。
+        if (this.captureInFlight || this.generating || this.followupGenerating || this.view === 'workspace'
+            || this.followupInput.value.trim() || window.settingsPage?.isOpen()
+            || window.modelPage?.isOpen() || (typeof Sheets !== 'undefined' && Sheets.stack?.length)) return;
+        const s = window.settingsManager;
+        if (!s.getSettings().model || s.missingKeyForCurrentModel()) { this.stopAutoCapture(); return; }
+        this.autoCaptureRequest = this.autoCaptureEpoch;
+        this.triggerCapture();
+    }
 
     /* ---------- 截图触发 ---------- */
     triggerCapture() {
@@ -486,6 +560,7 @@ class SnapSolver {
                 this.answerActions.classList.add('visible');
                 break;
             case 'error': {
+                this.stopAutoCapture();
                 let msg = '未知错误';
                 if (typeof data.error === 'string') msg = data.error;
                 else if (data.error) msg = data.error.message || data.error.error || JSON.stringify(data.error);
@@ -823,6 +898,7 @@ class SnapSolver {
     }
 
     stopGeneration() {
+        this.stopAutoCapture();
         if (this.socket?.connected) {
             this.socket.emit('stop_generation');
             this.stopGenerationBtn?.classList.remove('visible');
@@ -831,6 +907,8 @@ class SnapSolver {
 
     /* ---------- 事件绑定 ---------- */
     setupEventListeners() {
+        this.el('autoCaptureStatus').addEventListener('click', () => this.stopAutoCapture());
+        window.addEventListener('pagehide', () => this.stopAutoCapture());
         this.captureBtn.addEventListener('click', () => this.triggerCapture());
         this.el('modelEntry').addEventListener('click', () => window.modelPage.open());
         this.el('cropSendToAI').addEventListener('click', () => this.sendForSolve());
@@ -842,6 +920,7 @@ class SnapSolver {
         this.stopGenerationBtn.addEventListener('click', () => this.stopGeneration());
         this.el('answerBack').addEventListener('click', async () => {
             if (this.captureInFlight) return;
+            this.stopAutoCapture();
             // 清空守卫：有追问记录时轻确认一次（设计 4c）
             if (this.followupTurns.length) {
                 const idx = await Sheets.confirm({

@@ -346,7 +346,14 @@ def load_prompts():
     try:
         if os.path.exists(PROMPT_FILE):
             with open(PROMPT_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
+                prompts = json.load(f)
+            # 更新项目后补齐新增内置提示词，保留已有内容和自建提示词。
+            seed_path = os.path.join(CONFIG_DIR, 'prompts.json')
+            if os.path.exists(seed_path):
+                with open(seed_path, 'r', encoding='utf-8') as f:
+                    seeds = json.load(f)
+                return {**seeds, **prompts}
+            return prompts
         else:
             # 如果文件不存在，创建默认提示词配置
             default_prompts = {

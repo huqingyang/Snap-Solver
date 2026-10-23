@@ -239,7 +239,7 @@ class DoubaoModel(BaseModel):
                 user_content = [
                     {
                         "type": "text",
-                        "text": f"请使用{self.language}分析这张图片并提供详细解答。" if self.language and self.language != 'auto' else "请分析这张图片并提供详细解答?"
+                        "text": f"请使用{self.language}阅读图片并按系统提示词规定的格式和详略作答。" if self.language and self.language != 'auto' else "请阅读图片并按系统提示词规定的格式和详略作答。"
                     },
                     *self._image_content(image_data)
                 ]

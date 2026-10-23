@@ -144,12 +144,12 @@
             "defaultTier": "deep",
             "description": "通义千问3.8 旗舰多模态模型，适合复杂截图与多步推理"
         },
-        "deepseek-v4.1-flash": {
-            "name": "DeepSeek V4.1 Flash（百炼）",
+        "deepseek-v4.1-flash-1017": {
+            "name": "DeepSeek V4.1 Flash 1017（百炼）",
             "provider": "alibaba",
             "supportsMultimodal": true,
             "isReasoning": true,
-            "version": "latest",
+            "version": "1017",
             "reasoningTiers": ["fast", "deep", "max"],
             "defaultTier": "deep",
             "description": "百炼托管的 DeepSeek 多模态模型，支持截图解题，使用百炼 API Key"

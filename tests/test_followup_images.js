@@ -30,6 +30,8 @@ function createApp() {
     };
     const handlers = {};
     const emitted = [];
+    const timers = new Map();
+    let timerId = 0;
     const socket = {
         connected: true,
         on(name, fn) { handlers[name] = fn; },
@@ -46,7 +48,7 @@ function createApp() {
     };
     const context = vm.createContext({
         console,
-        window: { settingsManager: settings, uiManager: { showToast() {} } },
+        window: { settingsManager: settings, uiManager: { showToast() {} }, addEventListener() {} },
         document: {
             body: element('body'),
             getElementById: element,
@@ -57,8 +59,11 @@ function createApp() {
         io: () => socket,
         TIER_INFO: { fast: { label: 'Fast' } },
         PROVIDER_TAB: { alibaba: '通义' },
+        PROVIDER_LABEL: { alibaba: '阿里通义' },
         Sheets: { confirm: async () => 1 },
         requestAnimationFrame: () => 1,
+        setInterval(fn, delay) { timers.set(++timerId, { fn, delay }); return timerId; },
+        clearInterval(id) { timers.delete(id); },
         Cropper: class {
             constructor(img) { this.image = img.src; }
             destroy() {}
@@ -70,7 +75,8 @@ function createApp() {
     const app = new context.App();
     app.initialize();
     return {
-        app, elements, emitted,
+        app, elements, emitted, timers, settings,
+        failScreenshot: () => handlers.screenshot_complete({ success: false, error: 'offline capture error' }),
         screenshot: image => handlers.screenshot_complete({ success: true, image }),
         complete: content => app.handleAiResponse({ status: 'completed', content }),
         request: () => emitted.filter(e => e.name === 'analyze_image').at(-1).data,
@@ -133,4 +139,62 @@ test('canceling supplemental capture preserves the existing question', () => {
     app.followupInput.value = 'Continue';
     app.sendFollowup();
     assert.deepEqual(Array.from(request().images), ['first']);
+});
+
+test('automatic capture starts a fresh full-screen question without old images or history', () => {
+    const { app, emitted, screenshot, complete, request, timers } = createApp();
+    screenshot('old');
+    app.sendForSolve();
+    complete('Old answer');
+    app.followupInput.value = 'Old follow-up';
+    app.sendFollowup();
+    complete('Old explanation');
+    assert.equal(app.startAutoCapture(15), true);
+    assert.equal(timers.get(app.autoCaptureTimer).delay, 15000);
+    const before = emitted.length;
+    app.generating = true;
+    app.runAutoCapture();
+    assert.equal(emitted.length, before);
+    app.generating = false;
+    app.followupInput.value = 'Draft question';
+    app.runAutoCapture();
+    assert.equal(emitted.length, before);
+    app.followupInput.value = '';
+    app.runAutoCapture();
+    assert.equal(emitted.at(-1).name, 'capture_screenshot');
+    app.runAutoCapture();
+    assert.equal(emitted.length, before + 1);
+    screenshot('fresh-full-screen');
+    assert.deepEqual(Array.from(request().images), ['fresh-full-screen']);
+    assert.equal(request().history, undefined);
+    assert.equal(app.followupTurns.length, 0);
+    assert.equal(app.view, 'answer');
+    app.stopAutoCapture();
+    assert.equal(timers.size, 0);
+});
+
+test('turning automation off discards an in-flight capture and failures stop the timer', () => {
+    const { app, emitted, screenshot, failScreenshot, timers } = createApp();
+    assert.equal(app.startAutoCapture(5), true);
+    app.runAutoCapture();
+    app.stopAutoCapture();
+    screenshot('discard-me');
+    assert.equal(emitted.filter(e => e.name === 'analyze_image').length, 0);
+    assert.equal(app.startAutoCapture(5), true);
+    app.runAutoCapture();
+    failScreenshot();
+    assert.equal(timers.size, 0);
+    assert.equal(app.autoCaptureTimer, null);
+});
+
+test('interval validation, repeated start and model errors leave no extra timers', () => {
+    const { app, timers } = createApp();
+    for (const seconds of [0, -1, 1.2, 'invalid', 86401]) {
+        assert.equal(app.startAutoCapture(seconds), false);
+    }
+    assert.equal(app.startAutoCapture(10), true);
+    assert.equal(app.startAutoCapture(20), true);
+    assert.equal(timers.size, 1);
+    app.handleAiResponse({ status: 'error', error: 'offline test' });
+    assert.equal(timers.size, 0);
 });
