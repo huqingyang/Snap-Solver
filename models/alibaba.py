@@ -1,6 +1,8 @@
 import os
+import time
+import httpx
 from typing import Generator, Dict, Optional, Any
-from openai import OpenAI
+from openai import OpenAI, APITimeoutError
 from .base import BaseModel
 
 class AlibabaModel(BaseModel):
@@ -77,6 +79,7 @@ class AlibabaModel(BaseModel):
                 'https_proxy': os.environ.get('https_proxy')
             }
 
+            client = None
             try:
                 # Set proxy environment variables if provided
                 if proxies:
@@ -88,7 +91,9 @@ class AlibabaModel(BaseModel):
                 # Initialize OpenAI compatible client for DashScope
                 client = OpenAI(
                     api_key=self.api_key,
-                    base_url=self.api_base_url or "https://dashscope.aliyuncs.com/compatible-mode/v1"
+                    base_url=self.api_base_url or "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                    timeout=httpx.Timeout(90.0, connect=10.0),
+                    max_retries=0,
                 )
 
                 # Prepare messages
@@ -103,7 +108,8 @@ class AlibabaModel(BaseModel):
                     }
                 ]
 
-                # 创建聊天完成请求
+                request_started = time.monotonic()
+                print(f"百炼请求开始: model={self.get_model_identifier()}, tier={self.reasoning_tier}", flush=True)
                 response = client.chat.completions.create(
                     model=self.get_model_identifier(),
                     messages=messages,
@@ -113,6 +119,8 @@ class AlibabaModel(BaseModel):
                     **self._reasoning_kwargs()
                 )
 
+                print(f"百炼收到响应头: {time.monotonic() - request_started:.2f}s", flush=True)
+                first_content = False
                 # 记录思考过程和回答
                 reasoning_content = ""
                 answer_content = ""
@@ -127,9 +135,12 @@ class AlibabaModel(BaseModel):
                         continue
 
                     delta = chunk.choices[0].delta
+                    if not first_content and (delta.content or getattr(delta, 'reasoning_content', None)):
+                        first_content = True
+                        print(f"百炼首个内容: {time.monotonic() - request_started:.2f}s", flush=True)
 
                     # 处理思考过程
-                    if has_thinking and hasattr(delta, 'reasoning_content') and delta.reasoning_content is not None:
+                    if has_thinking and getattr(delta, 'reasoning_content', None):
                         reasoning_content += delta.reasoning_content
                         # 思考过程作为一个独立的内容发送
                         yield {
@@ -137,7 +148,7 @@ class AlibabaModel(BaseModel):
                             "content": reasoning_content,
                             "is_reasoning": True
                         }
-                    elif delta.content:
+                    if delta.content:
                         # 判断是否开始回答（从思考过程切换到回答）
                         if not is_answering and has_thinking:
                             is_answering = True
@@ -158,14 +169,22 @@ class AlibabaModel(BaseModel):
                             "content": answer_content
                         }
 
-                # 确保发送最终完整内容
-                if answer_content:
+                # 无正文的流也必须结束界面等待。
+                if answer_content.strip():
                     yield {
                         "status": "completed",
                         "content": answer_content
                     }
+                else:
+                    yield {
+                        "status": "error",
+                        "error": "百炼返回空答案（可能只有思考内容）。请重试或切换模型。"
+                    }
+                print(f"百炼请求结束: {time.monotonic() - request_started:.2f}s", flush=True)
 
             finally:
+                if client is not None:
+                    client.close()
                 # Restore original environment state
                 for key, value in original_env.items():
                     if value is None:
@@ -177,7 +196,8 @@ class AlibabaModel(BaseModel):
         except Exception as e:
             yield {
                 "status": "error",
-                "error": str(e)
+                "error": ("百炼请求超时：连接超过10秒或等待响应超过90秒。请重试或切换模型。"
+                          if isinstance(e, APITimeoutError) else str(e))
             }
 
     def analyze_image(self, image_data: str, proxies: dict = None, history: list = None) -> Generator[dict, None, None]:
@@ -192,6 +212,7 @@ class AlibabaModel(BaseModel):
                 'https_proxy': os.environ.get('https_proxy')
             }
 
+            client = None
             try:
                 # Set proxy environment variables if provided
                 if proxies:
@@ -203,7 +224,9 @@ class AlibabaModel(BaseModel):
                 # Initialize OpenAI compatible client for DashScope
                 client = OpenAI(
                     api_key=self.api_key,
-                    base_url=self.api_base_url or "https://dashscope.aliyuncs.com/compatible-mode/v1"
+                    base_url=self.api_base_url or "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                    timeout=httpx.Timeout(90.0, connect=10.0),
+                    max_retries=0,
                 )
 
                 # 使用系统提供的系统提示词，不再自动添加语言指令
@@ -231,7 +254,8 @@ class AlibabaModel(BaseModel):
                 # （DashScope 兼容模式与 OpenAI 一致，纯文本轮次用字符串 content）
                 messages.extend(self._text_history(history))
 
-                # 创建聊天完成请求
+                request_started = time.monotonic()
+                print(f"百炼请求开始: model={self.get_model_identifier()}, tier={self.reasoning_tier}", flush=True)
                 response = client.chat.completions.create(
                     model=self.get_model_identifier(),
                     messages=messages,
@@ -241,6 +265,8 @@ class AlibabaModel(BaseModel):
                     **self._reasoning_kwargs()
                 )
 
+                print(f"百炼收到响应头: {time.monotonic() - request_started:.2f}s", flush=True)
+                first_content = False
                 # 记录思考过程和回答
                 reasoning_content = ""
                 answer_content = ""
@@ -255,9 +281,12 @@ class AlibabaModel(BaseModel):
                         continue
 
                     delta = chunk.choices[0].delta
+                    if not first_content and (delta.content or getattr(delta, 'reasoning_content', None)):
+                        first_content = True
+                        print(f"百炼首个内容: {time.monotonic() - request_started:.2f}s", flush=True)
 
                     # 处理思考过程
-                    if has_thinking and hasattr(delta, 'reasoning_content') and delta.reasoning_content is not None:
+                    if has_thinking and getattr(delta, 'reasoning_content', None):
                         reasoning_content += delta.reasoning_content
                         # 思考过程作为一个独立的内容发送
                         yield {
@@ -265,7 +294,7 @@ class AlibabaModel(BaseModel):
                             "content": reasoning_content,
                             "is_reasoning": True
                         }
-                    elif delta.content:
+                    if delta.content:
                         # 判断是否开始回答（从思考过程切换到回答）
                         if not is_answering and has_thinking:
                             is_answering = True
@@ -286,14 +315,22 @@ class AlibabaModel(BaseModel):
                             "content": answer_content
                         }
 
-                # 确保发送最终完整内容
-                if answer_content:
+                # 无正文的流也必须结束界面等待。
+                if answer_content.strip():
                     yield {
                         "status": "completed",
                         "content": answer_content
                     }
+                else:
+                    yield {
+                        "status": "error",
+                        "error": "百炼返回空答案（可能只有思考内容）。请重试或切换模型。"
+                    }
+                print(f"百炼请求结束: {time.monotonic() - request_started:.2f}s", flush=True)
 
             finally:
+                if client is not None:
+                    client.close()
                 # Restore original environment state
                 for key, value in original_env.items():
                     if value is None:
@@ -305,7 +342,8 @@ class AlibabaModel(BaseModel):
         except Exception as e:
             yield {
                 "status": "error",
-                "error": str(e)
+                "error": ("百炼请求超时：连接超过10秒或等待响应超过90秒。请重试或切换模型。"
+                          if isinstance(e, APITimeoutError) else str(e))
             } 
 
     def _get_max_tokens(self) -> int:

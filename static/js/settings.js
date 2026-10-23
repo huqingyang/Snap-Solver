@@ -10,6 +10,7 @@
    ============================================================ */
 
 const KEY_META = {
+    DeepseekApiKey:  { label: 'DeepSeek 官方 API Key', url: 'https://platform.deepseek.com/api_keys' },
     AnthropicApiKey: { label: 'Anthropic API Key', url: 'https://console.anthropic.com/' },
     OpenaiApiKey:    { label: 'OpenAI API Key', url: 'https://platform.openai.com/api-keys' },
     AlibabaApiKey:   { label: '阿里 DashScope API Key', url: 'https://bailian.console.aliyun.com/' },
@@ -19,6 +20,7 @@ const KEY_META = {
 };
 
 const PROVIDER_KEY = {
+    deepseek: 'DeepseekApiKey',
     anthropic: 'AnthropicApiKey',
     openai: 'OpenaiApiKey',
     alibaba: 'AlibabaApiKey',
@@ -27,9 +29,9 @@ const PROVIDER_KEY = {
     moonshot: 'MoonshotApiKey',
 };
 
-const PROVIDER_LABEL = { anthropic: 'Anthropic', openai: 'OpenAI', google: 'Google', alibaba: '阿里通义', doubao: '字节豆包', moonshot: 'Kimi (Moonshot)' };
+const PROVIDER_LABEL = { deepseek: 'DeepSeek 官方', anthropic: 'Anthropic', openai: 'OpenAI', google: 'Google', alibaba: '阿里通义', doubao: '字节豆包', moonshot: 'Kimi (Moonshot)' };
 // 厂商 Tab / 行短名
-const PROVIDER_TAB = { anthropic: 'Anthropic', openai: 'OpenAI', google: 'Google', alibaba: '通义', doubao: '豆包', moonshot: 'Kimi' };
+const PROVIDER_TAB = { deepseek: 'DeepSeek 官方', anthropic: 'Anthropic', openai: 'OpenAI', google: 'Google', alibaba: '通义', doubao: '豆包', moonshot: 'Kimi' };
 
 // 三档展示名（英文短名，内部值仍为 fast/deep/max）
 const TIER_INFO = {
@@ -199,19 +201,26 @@ class SettingsManager extends EventTarget {
     }
 
     async saveApiKey(keyId, value) {
-        this.apiKeyValues[keyId] = value;
         try {
-            await fetch('/api/keys', {
+            const response = await fetch('/api/keys', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ [keyId]: value })
             });
+            const result = await response.json();
+            if (!response.ok || !result.success) {
+                window.uiManager?.showToast(result.message || '密钥保存失败，请重试', 'error');
+                return false;
+            }
+            this.apiKeyValues[keyId] = value;
             const provider = Object.keys(PROVIDER_KEY).find(p => PROVIDER_KEY[p] === keyId);
             window.uiManager?.showToast(`${PROVIDER_TAB[provider] || ''} 密钥${value ? '已保存' : '已清除'}`, 'success');
+            this.emitChange('keys');
+            return true;
         } catch (e) {
-            window.uiManager?.showToast('密钥保存失败，请重试', 'error');
+            window.uiManager?.showToast('密钥未保存：无法连接电脑端，请确认程序正在运行', 'error');
+            return false;
         }
-        this.emitChange('keys');
     }
 
     collectApiKeys() {

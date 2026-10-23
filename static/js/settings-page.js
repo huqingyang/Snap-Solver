@@ -225,8 +225,8 @@ class SettingsPage {
                 const v = input.value.trim();
                 // 空值保存 = 清除该密钥；本就未配且为空则直接收起
                 if (!v && !has) { this.expandedKey = null; this.render(); return; }
-                this.expandedKey = null;
-                await s.saveApiKey(keyId, v); // change 事件触发重渲
+                const saved = await s.saveApiKey(keyId, v);
+                if (saved) { this.expandedKey = null; this.render(); }
             });
             setTimeout(() => input.focus(), 50);
             return box;

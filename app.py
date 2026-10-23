@@ -552,6 +552,7 @@ def load_api_keys():
             "AnthropicApiKey": "",
             "OpenaiApiKey": "",
             "AlibabaApiKey": "",
+            "DeepseekApiKey": "",
             "MathpixAppId": "",
             "MathpixAppKey": "",
             "GoogleApiKey": "",
@@ -600,7 +601,8 @@ def load_proxy_api():
                     "alibaba": "",
                     "google": "",
                     "doubao": "",
-                    "moonshot": ""
+                    "moonshot": "",
+                    "deepseek": ""
                 }
             }
             save_proxy_api(default_proxy_apis)

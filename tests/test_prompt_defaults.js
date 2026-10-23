@@ -3,10 +3,11 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 
-function settingsWith(saved) {
+function settingsWith(saved, fetchImpl) {
     const storage = new Map([['snapSettings', JSON.stringify(saved)]]);
     const context = vm.createContext({
         EventTarget,
+        fetch: fetchImpl,
         window: {},
         localStorage: {
             getItem: key => storage.get(key) || null,
@@ -59,4 +60,39 @@ test('saved Bailian DeepSeek selection migrates to the 1017 snapshot', () => {
     assert.equal(saved().tier, 'max');
     assert.equal(saved().promptId, 'niuke_python');
     assert.equal(saved().proxyEnabled, true);
+});
+
+test('official DeepSeek requires its own key while Bailian keeps the Alibaba key', () => {
+    const { settings } = settingsWith({});
+    settings.apiKeyValues = { AlibabaApiKey: 'bailian-test' };
+    const official = { id: 'deepseek-flash', provider: 'deepseek' };
+    const bailian = { id: 'deepseek-v4.1-flash-1017', provider: 'alibaba' };
+    assert.equal(settings.keyIdOf(official), 'DeepseekApiKey');
+    assert.equal(settings.hasKeyFor(official), false);
+    assert.equal(settings.hasKeyFor(bailian), true);
+    settings.apiKeyValues.DeepseekApiKey = 'official-test';
+    assert.equal(settings.hasKeyFor(official), true);
+});
+
+
+test('keys update only after confirmed server persistence; failures keep the previous key', async () => {
+    for (const failure of ['offline', 'http', 'application']) {
+        const { settings } = settingsWith({}, async () => {
+            if (failure === 'offline') throw new Error('network');
+            return { ok: failure !== 'http', json: async () => ({ success: false, message: 'failed' }) };
+        });
+        settings.apiKeyValues = { DeepseekApiKey: 'previous' };
+        let changes = 0;
+        settings.emitChange = () => changes++;
+        assert.equal(await settings.saveApiKey('DeepseekApiKey', 'replacement'), false);
+        assert.equal(settings.apiKeyValues.DeepseekApiKey, 'previous');
+        assert.equal(changes, 0);
+    }
+    const { settings } = settingsWith({}, async () => ({ ok: true, json: async () => ({ success: true }) }));
+    settings.apiKeyValues = {};
+    let changes = 0;
+    settings.emitChange = () => changes++;
+    assert.equal(await settings.saveApiKey('DeepseekApiKey', 'saved-test'), true);
+    assert.equal(settings.apiKeyValues.DeepseekApiKey, 'saved-test');
+    assert.equal(changes, 1);
 });

@@ -29,6 +29,11 @@
             "name": "Moonshot",
             "api_key_id": "MoonshotApiKey",
             "class_name": "MoonshotModel"
+        },
+        "deepseek": {
+            "name": "DeepSeek 官方",
+            "api_key_id": "DeepseekApiKey",
+            "class_name": "DeepSeekModel"
         }
     },
     "models": {
@@ -88,7 +93,10 @@
             "supportsMultimodal": true,
             "isReasoning": true,
             "version": "preview",
-            "reasoningTiers": ["deep", "max"],
+            "reasoningTiers": [
+                "deep",
+                "max"
+            ],
             "defaultTier": "deep",
             "fallbackModel": "gemini-2.5-pro",
             "description": "Google 旗舰推理模型，面向最难的多步推理（预览版）"
@@ -110,7 +118,10 @@
             "supportsMultimodal": true,
             "isReasoning": true,
             "version": "stable",
-            "reasoningTiers": ["deep", "max"],
+            "reasoningTiers": [
+                "deep",
+                "max"
+            ],
             "defaultTier": "deep",
             "description": "稳定版深度推理模型（作为预览版的回退）"
         },
@@ -193,6 +204,16 @@
             "reasoningTiers": ["fast", "deep", "max"],
             "defaultTier": "deep",
             "description": "上一代多模态思考模型，作为 K2.6 限流/降本回退"
+        },
+        "deepseek-flash": {
+            "name": "DeepSeek V4.1 Flash 1017（官方）",
+            "provider": "deepseek",
+            "supportsMultimodal": true,
+            "isReasoning": true,
+            "version": "1017",
+            "reasoningTiers": ["fast", "deep", "max"],
+            "defaultTier": "fast",
+            "description": "DeepSeek 官方直连，支持截图、多图与追问，使用 DeepSeek 官方 API Key"
         }
     }
 }

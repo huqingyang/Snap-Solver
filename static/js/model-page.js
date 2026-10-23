@@ -155,8 +155,8 @@ class ModelPage {
             const had = !!this.s.apiKeyValues[keyId];
             // 空值保存 = 清除该密钥（重置）；缺钥填写场景下空值无意义，仍给提示
             if (!v && !had) { window.uiManager?.showToast('先粘贴密钥再保存', 'warning'); return; }
-            this.editingKey = false;
-            await this.s.saveApiKey(keyId, v); // change 事件触发重渲
+            const saved = await this.s.saveApiKey(keyId, v);
+            if (saved) { this.editingKey = false; this.render(); }
         });
         return card;
     }
