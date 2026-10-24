@@ -32,7 +32,8 @@ class DeepSeekModel(BaseModel):
             return {'extra_body': {'thinking': {'type': 'disabled'}}}
         return {
             'extra_body': {'thinking': {'type': 'enabled'}},
-            'reasoning_effort': 'max' if self.reasoning_tier == 'max' else 'high',
+            # 界面 High 保存为 deep，对应官方 low；Max 对应 max。
+            'reasoning_effort': 'max' if self.reasoning_tier == 'max' else 'low',
         }
 
     def analyze_text(self, text: str, proxies: dict = None) -> Generator[dict, None, None]:

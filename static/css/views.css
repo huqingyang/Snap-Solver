@@ -93,6 +93,21 @@ body[data-view="answer"] .app-topbar { display: none; }
     white-space: pre-line;
 }
 
+.auto-capture-start {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    min-height: 46px;
+    padding: 12px 22px;
+    border: 1px solid var(--edge);
+    border-radius: var(--r-pill);
+    background: var(--bg-elevated);
+    color: var(--text);
+}
+.auto-capture-start[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.auto-capture-interval { margin-top: -12px; color: var(--text-3); font-size: var(--fs-footnote); text-align: center; }
+
 /* 底部模型卡（模型入口一等公民） */
 .model-entry {
     margin: 0 var(--sp-5);

@@ -53,7 +53,7 @@ class SettingsPage {
             case 'keys': this.titleEl.textContent = 'API 密钥'; this.renderKeys(); break;
             case 'prompts': this.titleEl.textContent = '提示词模式'; this.renderPrompts(); break;
             case 'network': this.titleEl.textContent = '网络'; this.renderNetwork(); break;
-            case 'autoCapture': this.titleEl.textContent = '自动截屏'; this.renderAutoCapture(); break;
+            case 'autoCapture': this.titleEl.textContent = '自动截屏设置'; this.renderAutoCapture(); break;
             default: this.titleEl.textContent = '设置'; this.renderNav();
         }
     }
@@ -110,8 +110,8 @@ class SettingsPage {
             }),
             this.navRow({ icon: 'fa-language', label: '回复语言', value: s._language, onClick: () => this.openLanguageSheet() }),
             this.navRow({
-                icon: 'fa-clock', label: '自动截屏',
-                value: window.app?.autoCaptureTimer ? `每 ${window.app.autoCaptureInterval} 秒` : '已关闭',
+                icon: 'fa-clock', label: '自动截屏设置',
+                value: window.app?.autoCaptureSummary() || '普通题 5 秒 · Coding 10 分钟',
                 onClick: () => this.show('autoCapture')
             }),
         ));
@@ -144,28 +144,54 @@ class SettingsPage {
 
     renderAutoCapture() {
         const app = window.app;
+        const c = app.autoCaptureSettings;
         const panel = document.createElement('div');
         panel.className = 'auto-capture-settings';
         panel.innerHTML = `
-            <div class="form-field">
-                <label for="autoCaptureSeconds">截图间隔（秒）</label>
-                <input id="autoCaptureSeconds" type="number" min="1" max="86400" step="1" inputmode="numeric" />
+            <div class="nav-row static">
+                <label class="nav-row-label" for="autoCaptureFixedMode">固定间隔截屏</label>
+                <label class="switch"><input id="autoCaptureFixedMode" type="checkbox" /><span class="switch-slider"></span></label>
             </div>
-            <p>开启后按间隔截取电脑全屏并自动发送解题，每次都开始新题，替换当前题目和问答。</p>
-            <p>正在生成、裁剪或输入追问时跳过本次截图。保持页面打开；浏览器后台或设备休眠时可能延迟。刷新页面后默认关闭。自动解题会按模型用量消耗额度。</p>
-            <button class="btn btn-primary" id="autoCaptureToggle"></button>`;
-        const input = panel.querySelector('#autoCaptureSeconds');
-        input.value = app.autoCaptureInterval;
-        const button = panel.querySelector('#autoCaptureToggle');
-        button.textContent = app.autoCaptureTimer ? '关闭自动截屏' : '开启自动截屏';
-        input.disabled = !!app.autoCaptureTimer;
-        button.addEventListener('click', () => {
-            if (app.autoCaptureTimer) app.stopAutoCapture();
-            else if (app.startAutoCapture(input.value)) {
-                this.close();
-                window.uiManager.showToast(`自动截屏已开启，${app.autoCaptureInterval} 秒后开始`, 'success');
+            <p>打开：按固定间隔检查截图，模型思考或生成中跳过本轮。关闭：等模型完整答完，再按题型等待。</p>
+            <div id="autoCaptureFixedFields">
+                <div class="form-field">
+                    <label for="autoCaptureFixedSeconds">固定间隔（秒）</label>
+                    <input id="autoCaptureFixedSeconds" type="number" min="1" max="86400" step="1" inputmode="numeric" />
+                </div>
+            </div>
+            <div id="autoCaptureAnswerFields">
+                <div class="form-field">
+                    <label for="autoCaptureNormalSeconds">普通题答完后等待（秒）</label>
+                    <input id="autoCaptureNormalSeconds" type="number" min="1" max="86400" step="1" inputmode="numeric" />
+                </div>
+                <div class="form-field">
+                    <label for="autoCaptureCodingMinutes">Coding 答完后等待（分钟）</label>
+                    <input id="autoCaptureCodingMinutes" type="number" min="1" max="1440" step="1" inputmode="numeric" />
+                </div>
+            </div>
+            <p>两种模式均在启动 3 秒后截第一张。程序代码按 Coding 题处理，算法选择题按普通题处理。保存后生效，运行中的后续倒计时按新设置重新计算。</p>
+            <p>裁剪、输入追问或打开设置时延后截图。刷新、断线或报错后停止自动截屏。</p>
+            <button class="btn btn-primary" id="autoCaptureSave">保存设置</button>`;
+        const fixed = panel.querySelector('#autoCaptureFixedMode');
+        const interval = panel.querySelector('#autoCaptureFixedSeconds');
+        const normal = panel.querySelector('#autoCaptureNormalSeconds');
+        const coding = panel.querySelector('#autoCaptureCodingMinutes');
+        fixed.checked = c.fixedInterval;
+        interval.value = c.intervalSeconds;
+        normal.value = c.normalSeconds;
+        coding.value = c.codingMinutes;
+        const updateFields = () => {
+            panel.querySelector('#autoCaptureFixedFields').classList.toggle('hidden', !fixed.checked);
+            panel.querySelector('#autoCaptureAnswerFields').classList.toggle('hidden', fixed.checked);
+        };
+        fixed.addEventListener('change', updateFields);
+        updateFields();
+        panel.querySelector('#autoCaptureSave').addEventListener('click', () => {
+            if (app.setAutoCaptureSettings({ fixedInterval: fixed.checked, intervalSeconds: interval.value,
+                normalSeconds: normal.value, codingMinutes: coding.value })) {
+                window.uiManager.showToast('自动截屏设置已保存', 'success');
+                this.render();
             }
-            this.render();
         });
         this.scrollEl.appendChild(panel);
     }

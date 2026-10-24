@@ -48,3 +48,17 @@ class AlibabaStreamTests(unittest.TestCase):
                 request=httpx.Request('POST', 'https://example.test')))
             self.assertEqual(events[-1]['status'], 'error')
             self.assertIn('超时', events[-1]['error'])
+
+    def test_explicit_proxy_is_bound_to_client_without_changing_environment(self):
+        import os
+        model = AlibabaModel('offline')
+        with patch.dict(os.environ, {'https_proxy': 'http://other.example:9999',
+                                     'NO_PROXY': '*'}):
+            before = dict(os.environ)
+            with patch('models.alibaba.httpx.Client') as http, \
+                    patch('models.alibaba.OpenAI') as sdk:
+                model._create_client({'https': 'http://127.0.0.1:7892'})
+                self.assertEqual(http.call_args.kwargs['proxy'], 'http://127.0.0.1:7892')
+                self.assertFalse(http.call_args.kwargs['trust_env'])
+                self.assertIs(sdk.call_args.kwargs['http_client'], http.return_value)
+            self.assertEqual(dict(os.environ), before)

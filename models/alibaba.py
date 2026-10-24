@@ -1,6 +1,6 @@
-import os
 import time
 import httpx
+from urllib.parse import urlsplit
 from typing import Generator, Dict, Optional, Any
 from openai import OpenAI, APITimeoutError
 from .base import BaseModel
@@ -17,6 +17,22 @@ class AlibabaModel(BaseModel):
         super().__init__(api_key, temperature, system_prompt, language, reasoning_tier=reasoning_tier)
         self.api_base_url = api_base_url  # 存储API基础URL
 
+    def _create_client(self, proxies=None):
+        """Bind the selected proxy to this request, without changing process state."""
+        timeout = httpx.Timeout(90.0, connect=10.0)
+        base_url = self.api_base_url or "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        options = dict(api_key=self.api_key, base_url=base_url,
+                       timeout=timeout, max_retries=0)
+        proxy = (proxies or {}).get('https') or (proxies or {}).get('http')
+        route = '未指定代理（使用环境默认配置）'
+        if proxy:
+            options['http_client'] = httpx.Client(
+                proxy=proxy, timeout=timeout, trust_env=False)
+            parsed = urlsplit(proxy)
+            route = f'显式代理 {parsed.hostname}:{parsed.port}'
+        print(f"百炼连接配置: host={urlsplit(base_url).hostname}, route={route}", flush=True)
+        return OpenAI(**options)
+
     def _reasoning_kwargs(self) -> dict:
         """将 Fast/High/Max 映射为百炼各模型的原生推理参数。
 
@@ -32,7 +48,8 @@ class AlibabaModel(BaseModel):
                 'reasoning_effort': effort,
                 'extra_body': {'enable_thinking': True},
             }
-        effort_map = {'fast': 'none', 'deep': 'medium', 'max': 'xhigh'}
+        # 界面 High 的内部值为 deep，对应 Qwen 原生 low。
+        effort_map = {'fast': 'none', 'deep': 'low', 'max': 'xhigh'}
         return {'reasoning_effort': effort_map[self.reasoning_tier]}
     
     def get_default_system_prompt(self) -> str:
@@ -73,28 +90,9 @@ class AlibabaModel(BaseModel):
             # Initial status
             yield {"status": "started", "content": ""}
 
-            # Save original environment state
-            original_env = {
-                'http_proxy': os.environ.get('http_proxy'),
-                'https_proxy': os.environ.get('https_proxy')
-            }
-
             client = None
             try:
-                # Set proxy environment variables if provided
-                if proxies:
-                    if 'http' in proxies:
-                        os.environ['http_proxy'] = proxies['http']
-                    if 'https' in proxies:
-                        os.environ['https_proxy'] = proxies['https']
-
-                # Initialize OpenAI compatible client for DashScope
-                client = OpenAI(
-                    api_key=self.api_key,
-                    base_url=self.api_base_url or "https://dashscope.aliyuncs.com/compatible-mode/v1",
-                    timeout=httpx.Timeout(90.0, connect=10.0),
-                    max_retries=0,
-                )
+                client = self._create_client(proxies)
 
                 # Prepare messages
                 messages = [
@@ -185,13 +183,6 @@ class AlibabaModel(BaseModel):
             finally:
                 if client is not None:
                     client.close()
-                # Restore original environment state
-                for key, value in original_env.items():
-                    if value is None:
-                        if key in os.environ:
-                            del os.environ[key]
-                    else:
-                        os.environ[key] = value
 
         except Exception as e:
             yield {
@@ -206,28 +197,9 @@ class AlibabaModel(BaseModel):
             # Initial status
             yield {"status": "started", "content": ""}
 
-            # Save original environment state
-            original_env = {
-                'http_proxy': os.environ.get('http_proxy'),
-                'https_proxy': os.environ.get('https_proxy')
-            }
-
             client = None
             try:
-                # Set proxy environment variables if provided
-                if proxies:
-                    if 'http' in proxies:
-                        os.environ['http_proxy'] = proxies['http']
-                    if 'https' in proxies:
-                        os.environ['https_proxy'] = proxies['https']
-
-                # Initialize OpenAI compatible client for DashScope
-                client = OpenAI(
-                    api_key=self.api_key,
-                    base_url=self.api_base_url or "https://dashscope.aliyuncs.com/compatible-mode/v1",
-                    timeout=httpx.Timeout(90.0, connect=10.0),
-                    max_retries=0,
-                )
+                client = self._create_client(proxies)
 
                 # 使用系统提供的系统提示词，不再自动添加语言指令
                 system_prompt = self.system_prompt
@@ -331,13 +303,6 @@ class AlibabaModel(BaseModel):
             finally:
                 if client is not None:
                     client.close()
-                # Restore original environment state
-                for key, value in original_env.items():
-                    if value is None:
-                        if key in os.environ:
-                            del os.environ[key]
-                    else:
-                        os.environ[key] = value
 
         except Exception as e:
             yield {

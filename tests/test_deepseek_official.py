@@ -11,6 +11,10 @@ from models.factory import ModelFactory
 
 
 class DeepSeekOfficialTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        ModelFactory.initialize()
+
     def test_native_requests_and_streaming(self):
         for tier in ('fast', 'deep', 'max'):
             for images in (False, True):
@@ -50,7 +54,7 @@ class DeepSeekOfficialTests(unittest.TestCase):
                     if tier == 'fast':
                         self.assertNotIn('reasoning_effort', payload)
                     else:
-                        self.assertEqual(payload['reasoning_effort'], 'max' if tier == 'max' else 'high')
+                        self.assertEqual(payload['reasoning_effort'], 'max' if tier == 'max' else 'low')
                     if images:
                         content = payload['messages'][1]['content']
                         self.assertEqual([c['type'] for c in content], ['text', 'image_url', 'image_url'])

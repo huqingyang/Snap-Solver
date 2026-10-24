@@ -22,7 +22,8 @@ app.config['TEMPLATES_AUTO_RELOAD'] = True  # 非 debug 下也随文件更新模
 socketio = SocketIO(
     app,
     cors_allowed_origins="*",
-    ping_timeout=30,
+    # 容忍手机后台调度或局域网短暂抖动；与模型推理超时独立。
+    ping_timeout=120,
     ping_interval=5,
     max_http_buffer_size=50 * 1024 * 1024,
     async_mode='threading'  # 使用threading模式提高兼容性
@@ -92,11 +93,15 @@ def index():
 
 @socketio.on('connect')
 def handle_connect():
-    print('Client connected')
+    print(f'Client connected: sid={request.sid}', flush=True)
 
 @socketio.on('disconnect')
-def handle_disconnect():
-    print('Client disconnected')
+def handle_disconnect(reason=None):
+    sid = request.sid
+    task = generation_tasks.pop(sid, None)
+    if task is not None:
+        task.set()
+    print(f'Client disconnected: sid={sid}, reason={reason}', flush=True)
 
 def create_model_instance(model_id, settings, is_reasoning=False):
     """创建模型实例"""
@@ -261,6 +266,9 @@ def handle_analyze_image(data):
 
         # 创建用于停止生成的事件（同 sid 新请求会顶替旧的停止句柄）
         stop_event = Event()
+        previous = generation_tasks.get(sid)
+        if previous is not None:
+            previous.set()
         generation_tasks[sid] = stop_event
 
         socketio.start_background_task(_run_image_analysis, model_instance, image_data, proxies, sid, stop_event, history)
@@ -273,6 +281,8 @@ def handle_analyze_image(data):
 def _run_image_analysis(model_instance, image_data, proxies, sid, stop_event, history=None):
     """后台任务：消费模型流式生成器并逐事件下发"""
     try:
+        if stop_event.is_set():
+            return
         sent = 0
         last_status = None
         for response in model_instance.analyze_image(image_data, proxies=proxies, history=history):
@@ -293,7 +303,8 @@ def _run_image_analysis(model_instance, image_data, proxies, sid, stop_event, hi
     except Exception as e:
         print(f"Error in image analysis task: {str(e)}")
         traceback.print_exc()
-        socketio.emit('ai_response', {'status': 'error', 'error': f'分析图像时出错: {str(e)}'}, room=sid)
+        if not stop_event.is_set():
+            socketio.emit('ai_response', {'status': 'error', 'error': f'分析图像时出错: {str(e)}'}, room=sid)
     finally:
         # 清理任务（仅当仍是本次的停止句柄时）
         if generation_tasks.get(sid) is stop_event:
