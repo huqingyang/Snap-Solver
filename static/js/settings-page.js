@@ -2,7 +2,7 @@
    SettingsPage — 设置整页（设计定稿 t3：3a/3b/3c/3d）
    两级菜单：主页只做分组导航 + 当前值预览；
    二级页：API 密钥（就地展开编辑）/ 提示词模式（内置|自建 + 删除确认）/
-          网络（代理 + 各厂商中转地址）；
+          网络（HTTP 代理 + 各厂商 API Base URL）；
    回复语言与外观用轻量 Sheets 内联完成，不设二级页。
    数据读写全部经 settingsManager；change 事件驱动重渲。
    ============================================================ */
@@ -99,7 +99,7 @@ class SettingsPage {
         const stats = s.keyStats();
         const prompt = s.prompts[s.currentPromptId];
         const themeText = { light: '浅色', dark: '深色', system: '跟随系统' }[window.uiManager?.themeChoice || 'system'];
-        const netText = s._proxyEnabled ? '代理已开' : (s.relayCount() ? `中转 ${s.relayCount()} 家` : '代理已关');
+        const netText = s._proxyEnabled ? '代理已开' : (s.relayCount() ? `API 地址 ${s.relayCount()} 家` : '代理已关');
 
         wrap.appendChild(this.sectionLabel('解题'));
         wrap.appendChild(this.group(
@@ -417,7 +417,7 @@ class SettingsPage {
         this.scrollEl.appendChild(this.sectionLabel('HTTP 代理'));
         this.scrollEl.appendChild(this.group(switchRow, hostPort));
 
-        // 中转 API 地址
+        // API Base URL：独立于上方的 HTTP 代理设置。
         const relayRows = Object.keys(PROVIDER_KEY).map(p => {
             const row = document.createElement('div');
             row.className = 'relay-row';
@@ -428,7 +428,7 @@ class SettingsPage {
             input.addEventListener('change', () => s.setRelay(p, input.value));
             return row;
         });
-        this.scrollEl.appendChild(this.sectionLabel('中转 API 地址', '填了即走中转'));
+        this.scrollEl.appendChild(this.sectionLabel('API Base URL', '可填官方专属地址，与 HTTP 代理独立'));
         this.scrollEl.appendChild(this.group(...relayRows));
     }
 

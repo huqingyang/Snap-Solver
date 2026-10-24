@@ -7,6 +7,28 @@ import app as server
 
 
 class ConnectionRecoveryTests(unittest.TestCase):
+    def test_stopping_a_task_closes_its_provider_generator(self):
+        stop = Event()
+        closed = Event()
+        model = MagicMock()
+
+        def stream(*args, **kwargs):
+            try:
+                yield {'status': 'started', 'content': ''}
+                stop.set()
+                yield {'status': 'streaming', 'content': 'late answer'}
+            finally:
+                closed.set()
+
+        model.analyze_image.side_effect = stream
+        sid = 'offline-stop'
+        server.generation_tasks[sid] = stop
+        with patch.object(server.socketio, 'emit') as emit:
+            server._run_image_analysis(model, 'offline', None, sid, stop)
+        self.assertTrue(closed.is_set())
+        self.assertNotIn(sid, server.generation_tasks)
+        self.assertEqual(emit.call_count, 1)
+
     def test_disconnect_cancels_tasks_and_a_new_request_retires_the_previous_task(self):
         client = server.socketio.test_client(server.app)
         tasks = []

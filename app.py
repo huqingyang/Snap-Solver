@@ -151,12 +151,12 @@ def create_model_instance(model_id, settings, is_reasoning=False):
     # 获取maxTokens参数，默认为8192
     max_tokens = int(settings.get('maxTokens', 8192))
     
-    # 检查是否启用中转API
+    # API Base URL 覆盖项：可使用官方专属地址，与 HTTP 代理独立。
     proxy_api_config = load_proxy_api()
     base_url = None
     
     if proxy_api_config.get('enabled', False):
-        # 根据模型类型选择对应的中转API
+        # 根据模型类型选择对应的 API Base URL。
         if "claude" in model_id.lower() or "anthropic" in model_id.lower():
             base_url = proxy_api_config.get('apis', {}).get('anthropic', '')
         elif any(keyword in model_id.lower() for keyword in ["gpt", "openai"]):
@@ -280,12 +280,14 @@ def handle_analyze_image(data):
 
 def _run_image_analysis(model_instance, image_data, proxies, sid, stop_event, history=None):
     """后台任务：消费模型流式生成器并逐事件下发"""
+    responses = None
     try:
         if stop_event.is_set():
             return
         sent = 0
         last_status = None
-        for response in model_instance.analyze_image(image_data, proxies=proxies, history=history):
+        responses = model_instance.analyze_image(image_data, proxies=proxies, history=history)
+        for response in responses:
             # 检查是否收到停止信号
             if stop_event.is_set():
                 print(f"分析图像生成被用户 {sid} 停止")
@@ -306,9 +308,14 @@ def _run_image_analysis(model_instance, image_data, proxies, sid, stop_event, hi
         if not stop_event.is_set():
             socketio.emit('ai_response', {'status': 'error', 'error': f'分析图像时出错: {str(e)}'}, room=sid)
     finally:
-        # 清理任务（仅当仍是本次的停止句柄时）
-        if generation_tasks.get(sid) is stop_event:
-            del generation_tasks[sid]
+        try:
+            close = getattr(responses, 'close', None)
+            if callable(close):
+                close()
+        finally:
+            # 清理任务（仅当仍是本次的停止句柄时）
+            if generation_tasks.get(sid) is stop_event:
+                del generation_tasks[sid]
 
 @socketio.on('capture_screenshot')
 def handle_capture_screenshot(data):
@@ -746,7 +753,7 @@ def remove_prompt(prompt_id):
 
 @app.route('/api/proxy-api', methods=['GET'])
 def get_proxy_api():
-    """API端点：获取中转API配置"""
+    """获取 API Base URL 覆盖项；保留旧路由以兼容现有配置。"""
     try:
         proxy_api_config = load_proxy_api()
         return jsonify(proxy_api_config)
@@ -756,20 +763,20 @@ def get_proxy_api():
 
 @app.route('/api/proxy-api', methods=['POST'])
 def update_proxy_api():
-    """API端点：更新中转API配置"""
+    """更新 API Base URL 覆盖项；与 HTTP 代理配置独立。"""
     try:
         new_config = request.json
         if not isinstance(new_config, dict):
-            return jsonify({"success": False, "message": "无效的中转API配置格式"}), 400
+            return jsonify({"success": False, "message": "无效的 API 地址配置格式"}), 400
         
         # 保存回文件
         if save_proxy_api(new_config):
-            return jsonify({"success": True, "message": "中转API配置已保存"})
+            return jsonify({"success": True, "message": "API 地址配置已保存"})
         else:
-            return jsonify({"success": False, "message": "保存中转API配置失败"}), 500
+            return jsonify({"success": False, "message": "保存 API 地址配置失败"}), 500
     
     except Exception as e:
-        return jsonify({"success": False, "message": f"更新中转API配置错误: {str(e)}"}), 500
+        return jsonify({"success": False, "message": f"更新 API 地址配置错误: {str(e)}"}), 500
 
 if __name__ == '__main__':
     # 尝试使用5000端口，如果被占用则使用5001

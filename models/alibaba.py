@@ -1,9 +1,13 @@
 import time
-import httpx
 from urllib.parse import urlsplit
-from typing import Generator, Dict, Optional, Any
+from typing import Generator
+
+import httpx
 from openai import OpenAI, APITimeoutError
+
 from .base import BaseModel
+from .client_pool import client_pool
+
 
 class AlibabaModel(BaseModel):
     def __init__(self, api_key: str, temperature: float = 0.7, system_prompt: str = None, language: str = None, model_name: str = None, api_base_url: str = None, reasoning_tier: str = "deep"):
@@ -18,20 +22,18 @@ class AlibabaModel(BaseModel):
         self.api_base_url = api_base_url  # 存储API基础URL
 
     def _create_client(self, proxies=None):
-        """Bind the selected proxy to this request, without changing process state."""
-        timeout = httpx.Timeout(90.0, connect=10.0)
         base_url = self.api_base_url or "https://dashscope.aliyuncs.com/compatible-mode/v1"
-        options = dict(api_key=self.api_key, base_url=base_url,
-                       timeout=timeout, max_retries=0)
         proxy = (proxies or {}).get('https') or (proxies or {}).get('http')
         route = '未指定代理（使用环境默认配置）'
         if proxy:
-            options['http_client'] = httpx.Client(
-                proxy=proxy, timeout=timeout, trust_env=False)
             parsed = urlsplit(proxy)
             route = f'显式代理 {parsed.hostname}:{parsed.port}'
         print(f"百炼连接配置: host={urlsplit(base_url).hostname}, route={route}", flush=True)
-        return OpenAI(**options)
+        return client_pool.borrow(
+            'alibaba', self.api_key, base_url, proxy=proxy,
+            timeout=httpx.Timeout(90.0, connect=10.0), max_retries=0,
+            client_factory=OpenAI,
+        )
 
     def _reasoning_kwargs(self) -> dict:
         """将 Fast/High/Max 映射为百炼各模型的原生推理参数。
@@ -85,232 +87,66 @@ class AlibabaModel(BaseModel):
         return self.reasoning_tier != 'fast'
 
     def analyze_text(self, text: str, proxies: dict = None) -> Generator[dict, None, None]:
-        """Stream the model's response for text analysis"""
+        messages = [
+            {'role': 'system', 'content': [{'type': 'text', 'text': self.system_prompt}]},
+            {'role': 'user', 'content': [{'type': 'text', 'text': text}]},
+        ]
+        yield from self._stream(messages, proxies)
+
+    def analyze_image(self, image_data, proxies: dict = None,
+                      history: list = None) -> Generator[dict, None, None]:
+        messages = [
+            {'role': 'system', 'content': [{'type': 'text', 'text': self.system_prompt}]},
+            {'role': 'user', 'content': [
+                *self._image_content(image_data),
+                {'type': 'text', 'text': '请结合全部图片作答，遵循系统提示词要求的输出格式和详略。这些图片属于同一道题，按顺序阅读，重叠内容不要重复计算。'},
+            ]},
+            *self._text_history(history),
+        ]
+        yield from self._stream(messages, proxies)
+
+    def _stream(self, messages, proxies):
+        yield {'status': 'started', 'content': ''}
+        started = time.monotonic()
         try:
-            # Initial status
-            yield {"status": "started", "content": ""}
-
-            client = None
-            try:
-                client = self._create_client(proxies)
-
-                # Prepare messages
-                messages = [
-                    {
-                        "role": "system",
-                        "content": [{"type": "text", "text": self.system_prompt}]
-                    },
-                    {
-                        "role": "user",
-                        "content": [{"type": "text", "text": text}]
-                    }
-                ]
-
-                request_started = time.monotonic()
+            with self._create_client(proxies) as client:
                 print(f"百炼请求开始: model={self.get_model_identifier()}, tier={self.reasoning_tier}", flush=True)
-                response = client.chat.completions.create(
-                    model=self.get_model_identifier(),
-                    messages=messages,
-                    temperature=self.temperature,
-                    stream=True,
-                    max_tokens=self._get_max_tokens(),
-                    **self._reasoning_kwargs()
-                )
-
-                print(f"百炼收到响应头: {time.monotonic() - request_started:.2f}s", flush=True)
+                answer = ''
+                reasoning = ''
+                answering = False
                 first_content = False
-                # 记录思考过程和回答
-                reasoning_content = ""
-                answer_content = ""
-                is_answering = False
-
-                # 当前档位/模型是否会产生思考过程
-                has_thinking = self._is_thinking_model()
-                print(f"分析文本使用模型标识符: {self.get_model_identifier()}, 是否含思考过程: {has_thinking}")
-
-                for chunk in response:
-                    if not chunk.choices:
-                        continue
-
-                    delta = chunk.choices[0].delta
-                    if not first_content and (delta.content or getattr(delta, 'reasoning_content', None)):
-                        first_content = True
-                        print(f"百炼首个内容: {time.monotonic() - request_started:.2f}s", flush=True)
-
-                    # 处理思考过程
-                    if has_thinking and getattr(delta, 'reasoning_content', None):
-                        reasoning_content += delta.reasoning_content
-                        # 思考过程作为一个独立的内容发送
-                        yield {
-                            "status": "reasoning",
-                            "content": reasoning_content,
-                            "is_reasoning": True
-                        }
-                    if delta.content:
-                        # 判断是否开始回答（从思考过程切换到回答）
-                        if not is_answering and has_thinking:
-                            is_answering = True
-                            # 发送完整的思考过程
-                            if reasoning_content:
-                                yield {
-                                    "status": "reasoning_complete",
-                                    "content": reasoning_content,
-                                    "is_reasoning": True
-                                }
-                        
-                        # 累积回答内容
-                        answer_content += delta.content
-                        
-                        # 发送回答内容
-                        yield {
-                            "status": "streaming",
-                            "content": answer_content
-                        }
-
-                # 无正文的流也必须结束界面等待。
-                if answer_content.strip():
-                    yield {
-                        "status": "completed",
-                        "content": answer_content
-                    }
+                with client.chat.completions.create(
+                    model=self.get_model_identifier(), messages=messages,
+                    temperature=self.temperature, stream=True,
+                    max_tokens=self._get_max_tokens(), **self._reasoning_kwargs()
+                ) as response:
+                    print(f"百炼收到响应头: {time.monotonic() - started:.2f}s", flush=True)
+                    for chunk in response:
+                        if not chunk.choices:
+                            continue
+                        delta = chunk.choices[0].delta
+                        thought = getattr(delta, 'reasoning_content', None)
+                        if not first_content and (delta.content or thought):
+                            first_content = True
+                            print(f"百炼首个内容: {time.monotonic() - started:.2f}s", flush=True)
+                        if self._is_thinking_model() and thought:
+                            reasoning += thought
+                            yield {'status': 'reasoning', 'content': reasoning, 'is_reasoning': True}
+                        if delta.content:
+                            if reasoning and not answering:
+                                yield {'status': 'reasoning_complete', 'content': reasoning, 'is_reasoning': True}
+                            answering = True
+                            answer += delta.content
+                            yield {'status': 'streaming', 'content': answer}
+                if answer.strip():
+                    yield {'status': 'completed', 'content': answer}
                 else:
-                    yield {
-                        "status": "error",
-                        "error": "百炼返回空答案（可能只有思考内容）。请重试或切换模型。"
-                    }
-                print(f"百炼请求结束: {time.monotonic() - request_started:.2f}s", flush=True)
-
-            finally:
-                if client is not None:
-                    client.close()
-
-        except Exception as e:
-            yield {
-                "status": "error",
-                "error": ("百炼请求超时：连接超过10秒或等待响应超过90秒。请重试或切换模型。"
-                          if isinstance(e, APITimeoutError) else str(e))
-            }
-
-    def analyze_image(self, image_data: str, proxies: dict = None, history: list = None) -> Generator[dict, None, None]:
-        """Stream model's response for image analysis"""
-        try:
-            # Initial status
-            yield {"status": "started", "content": ""}
-
-            client = None
-            try:
-                client = self._create_client(proxies)
-
-                # 使用系统提供的系统提示词，不再自动添加语言指令
-                system_prompt = self.system_prompt
-
-                # Prepare messages with image
-                messages = [
-                    {
-                        "role": "system",
-                        "content": [{"type": "text", "text": system_prompt}]
-                    },
-                    {
-                        "role": "user",
-                        "content": [
-                            *self._image_content(image_data),
-                            {
-                                "type": "text",
-                                "text": "请结合全部图片作答，遵循系统提示词要求的输出格式和详略。这些图片属于同一道题，按顺序阅读，重叠内容不要重复计算。"
-                            }
-                        ]
-                    }
-                ]
-
-                # 同题追问：既往问答与新追问追加在带图首轮之后
-                # （DashScope 兼容模式与 OpenAI 一致，纯文本轮次用字符串 content）
-                messages.extend(self._text_history(history))
-
-                request_started = time.monotonic()
-                print(f"百炼请求开始: model={self.get_model_identifier()}, tier={self.reasoning_tier}", flush=True)
-                response = client.chat.completions.create(
-                    model=self.get_model_identifier(),
-                    messages=messages,
-                    temperature=self.temperature,
-                    stream=True,
-                    max_tokens=self._get_max_tokens(),
-                    **self._reasoning_kwargs()
-                )
-
-                print(f"百炼收到响应头: {time.monotonic() - request_started:.2f}s", flush=True)
-                first_content = False
-                # 记录思考过程和回答
-                reasoning_content = ""
-                answer_content = ""
-                is_answering = False
-
-                # 当前档位/模型是否会产生思考过程
-                has_thinking = self._is_thinking_model()
-                print(f"分析图像使用模型标识符: {self.get_model_identifier()}, 是否含思考过程: {has_thinking}")
-
-                for chunk in response:
-                    if not chunk.choices:
-                        continue
-
-                    delta = chunk.choices[0].delta
-                    if not first_content and (delta.content or getattr(delta, 'reasoning_content', None)):
-                        first_content = True
-                        print(f"百炼首个内容: {time.monotonic() - request_started:.2f}s", flush=True)
-
-                    # 处理思考过程
-                    if has_thinking and getattr(delta, 'reasoning_content', None):
-                        reasoning_content += delta.reasoning_content
-                        # 思考过程作为一个独立的内容发送
-                        yield {
-                            "status": "reasoning",
-                            "content": reasoning_content,
-                            "is_reasoning": True
-                        }
-                    if delta.content:
-                        # 判断是否开始回答（从思考过程切换到回答）
-                        if not is_answering and has_thinking:
-                            is_answering = True
-                            # 发送完整的思考过程
-                            if reasoning_content:
-                                yield {
-                                    "status": "reasoning_complete",
-                                    "content": reasoning_content,
-                                    "is_reasoning": True
-                                }
-                        
-                        # 累积回答内容
-                        answer_content += delta.content
-                        
-                        # 发送回答内容
-                        yield {
-                            "status": "streaming",
-                            "content": answer_content
-                        }
-
-                # 无正文的流也必须结束界面等待。
-                if answer_content.strip():
-                    yield {
-                        "status": "completed",
-                        "content": answer_content
-                    }
-                else:
-                    yield {
-                        "status": "error",
-                        "error": "百炼返回空答案（可能只有思考内容）。请重试或切换模型。"
-                    }
-                print(f"百炼请求结束: {time.monotonic() - request_started:.2f}s", flush=True)
-
-            finally:
-                if client is not None:
-                    client.close()
-
-        except Exception as e:
-            yield {
-                "status": "error",
-                "error": ("百炼请求超时：连接超过10秒或等待响应超过90秒。请重试或切换模型。"
-                          if isinstance(e, APITimeoutError) else str(e))
-            } 
+                    yield {'status': 'error', 'error': '百炼返回空答案（可能只有思考内容）。请重试或切换模型。'}
+                print(f"百炼请求结束: {time.monotonic() - started:.2f}s", flush=True)
+        except Exception as exc:
+            error = ('百炼请求超时：连接超过10秒或等待响应超过90秒。请重试或切换模型。'
+                     if isinstance(exc, APITimeoutError) else str(exc))
+            yield {'status': 'error', 'error': error}
 
     def _get_max_tokens(self) -> int:
-        """返回合适的 max_tokens 值"""
-        return self.max_tokens if hasattr(self, 'max_tokens') and self.max_tokens else 4000
+        return getattr(self, 'max_tokens', None) or 4000

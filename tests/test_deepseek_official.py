@@ -1,5 +1,6 @@
 """Official API request serialization and provider isolation, without network calls."""
 import json
+from contextlib import nullcontext
 import unittest
 from unittest.mock import patch
 
@@ -35,12 +36,13 @@ class DeepSeekOfficialTests(unittest.TestCase):
 
                     client = OpenAI(api_key='official-test', base_url='https://api.deepseek.com',
                                     http_client=httpx.Client(transport=httpx.MockTransport(transport)))
+                    self.addCleanup(client.close)
                     model = ModelFactory.create_model('deepseek-flash', 'official-test',
                                                       reasoning_tier=tier, system_prompt='short')
                     self.assertIsInstance(model, DeepSeekModel)
                     history = [{'role': 'assistant', 'content': 'previous'},
                                {'role': 'user', 'content': 'followup'}]
-                    with patch('models.deepseek.OpenAI', return_value=client):
+                    with patch('models.deepseek.client_pool.borrow', return_value=nullcontext(client)):
                         result = list(model.analyze_image(['iVBORw0KGgo=', '/9j/AA=='], history=history)
                                       if images else model.analyze_text('hello'))
                     self.assertEqual(result[-1], {'status': 'completed', 'content': 'OK'})

@@ -1,5 +1,6 @@
 """Offline checks for ordered image inputs and follow-up context."""
 import unittest
+from contextlib import nullcontext
 from unittest.mock import MagicMock, patch
 
 from models.alibaba import AlibabaModel
@@ -31,8 +32,8 @@ class MultiImageTests(unittest.TestCase):
                 self.assertIsInstance(model, AlibabaModel)
                 for method, value in ((model.analyze_text, 'hello'), (model.analyze_image, IMAGES)):
                     client = MagicMock()
-                    client.chat.completions.create.return_value = []
-                    with patch('models.alibaba.OpenAI', return_value=client):
+                    client.chat.completions.create.return_value = MagicMock()
+                    with patch('models.alibaba.client_pool.borrow', return_value=nullcontext(client)):
                         list(method(value))
                     kwargs = client.chat.completions.create.call_args.kwargs
                     self.assertEqual(kwargs['model'], model_id)
@@ -50,8 +51,10 @@ class MultiImageTests(unittest.TestCase):
         ):
             with self.subTest(model=model.get_model_identifier()):
                 client = MagicMock()
-                client.chat.completions.create.return_value = []
-                with patch(f'models.{module}.OpenAI', return_value=client):
+                client.chat.completions.create.return_value = MagicMock()
+                with patch(f'models.{module}.OpenAI', return_value=client), patch(
+                    'models.alibaba.client_pool.borrow', return_value=nullcontext(client)
+                ):
                     list(model.analyze_image(IMAGES, history=HISTORY))
                 messages = client.chat.completions.create.call_args.kwargs['messages']
                 images = [p for p in messages[1]['content'] if p['type'] == 'image_url']

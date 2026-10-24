@@ -5,10 +5,10 @@ https://api-docs.deepseek.com/guides/thinking_mode/
 """
 from typing import Generator
 
-import httpx
 from openai import OpenAI
 
 from .base import BaseModel
+from .client_pool import client_pool
 
 
 class DeepSeekModel(BaseModel):
@@ -60,47 +60,40 @@ class DeepSeekModel(BaseModel):
 
     def _stream(self, messages: list, proxies: dict = None) -> Generator[dict, None, None]:
         yield {'status': 'started', 'content': ''}
-        client = None
+        proxy = (proxies or {}).get('https') or (proxies or {}).get('http')
         try:
-            options = {
-                'api_key': self.api_key,
-                'base_url': self.api_base_url or 'https://api.deepseek.com',
-            }
-            proxy = (proxies or {}).get('https') or (proxies or {}).get('http')
-            if proxy:
-                options['http_client'] = httpx.Client(proxy=proxy)
-            client = OpenAI(**options)
-            params = {
-                'model': self.get_model_identifier(),
-                'messages': messages,
-                'stream': True,
-                'max_tokens': getattr(self, 'max_tokens', None) or 8192,
-                **self._reasoning_kwargs(),
-            }
-            answer = ''
-            thinking = ''
-            thinking_finished = False
-            response = client.chat.completions.create(**params)
-            try:
-                for chunk in response:
-                    if not chunk.choices:
-                        continue
-                    delta = chunk.choices[0].delta
-                    reasoning = getattr(delta, 'reasoning_content', None)
-                    if reasoning:
-                        thinking += reasoning
-                        yield {'status': 'thinking', 'content': thinking}
-                    if delta.content:
-                        if thinking and not thinking_finished:
-                            thinking_finished = True
-                            yield {'status': 'thinking_complete', 'content': thinking}
-                        answer += delta.content
-                        yield {'status': 'streaming', 'content': answer}
-            finally:
-                response.close()
-            yield {'status': 'completed', 'content': answer}
+            with client_pool.borrow(
+                'deepseek', self.api_key, self.api_base_url or 'https://api.deepseek.com',
+                proxy=proxy, client_factory=OpenAI,
+            ) as client:
+                params = {
+                    'model': self.get_model_identifier(),
+                    'messages': messages,
+                    'stream': True,
+                    'max_tokens': getattr(self, 'max_tokens', None) or 8192,
+                    **self._reasoning_kwargs(),
+                }
+                answer = ''
+                thinking = ''
+                thinking_finished = False
+                response = client.chat.completions.create(**params)
+                try:
+                    for chunk in response:
+                        if not chunk.choices:
+                            continue
+                        delta = chunk.choices[0].delta
+                        reasoning = getattr(delta, 'reasoning_content', None)
+                        if reasoning:
+                            thinking += reasoning
+                            yield {'status': 'thinking', 'content': thinking}
+                        if delta.content:
+                            if thinking and not thinking_finished:
+                                thinking_finished = True
+                                yield {'status': 'thinking_complete', 'content': thinking}
+                            answer += delta.content
+                            yield {'status': 'streaming', 'content': answer}
+                finally:
+                    response.close()
+                yield {'status': 'completed', 'content': answer}
         except Exception as exc:
             yield {'status': 'error', 'error': f'DeepSeek API错误: {exc}'}
-        finally:
-            if client is not None:
-                client.close()

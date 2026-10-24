@@ -1,5 +1,6 @@
 """Every Bailian stream must terminate, including empty and interrupted streams."""
 import unittest
+from contextlib import nullcontext
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -18,14 +19,20 @@ class AlibabaStreamTests(unittest.TestCase):
     def run_stream(self, chunks, image, tier='fast', error=None):
         model = AlibabaModel('offline', reasoning_tier=tier)
         client = MagicMock()
-        client.chat.completions.create.return_value = chunks
+        stream = MagicMock()
+        stream.close.return_value = None
+        stream.__enter__.return_value = iter(chunks)
+        stream.__exit__.side_effect = lambda *args: stream.close()
+        client.chat.completions.create.return_value = stream
         if error:
             client.chat.completions.create.side_effect = error
-        with patch('models.alibaba.OpenAI', return_value=client) as constructor:
+        with patch('models.alibaba.client_pool.borrow', return_value=nullcontext(client)) as constructor:
             events = list(model.analyze_image('iVBORw0KGgo=') if image else model.analyze_text('test'))
         self.assertEqual(constructor.call_args.kwargs['max_retries'], 0)
         self.assertEqual(constructor.call_args.kwargs['timeout'].read, 90)
-        client.close.assert_called_once()
+        client.close.assert_not_called()
+        if error is None:
+            stream.close.assert_called_once()
         return events
 
     def test_empty_whitespace_and_reasoning_only_streams_end_with_error(self):
@@ -55,10 +62,7 @@ class AlibabaStreamTests(unittest.TestCase):
         with patch.dict(os.environ, {'https_proxy': 'http://other.example:9999',
                                      'NO_PROXY': '*'}):
             before = dict(os.environ)
-            with patch('models.alibaba.httpx.Client') as http, \
-                    patch('models.alibaba.OpenAI') as sdk:
-                model._create_client({'https': 'http://127.0.0.1:7892'})
-                self.assertEqual(http.call_args.kwargs['proxy'], 'http://127.0.0.1:7892')
-                self.assertFalse(http.call_args.kwargs['trust_env'])
-                self.assertIs(sdk.call_args.kwargs['http_client'], http.return_value)
+            with patch('models.alibaba.client_pool.borrow', return_value=nullcontext('client')) as borrow:
+                with model._create_client({'https': 'http://127.0.0.1:7892'}):
+                    self.assertEqual(borrow.call_args.kwargs['proxy'], 'http://127.0.0.1:7892')
             self.assertEqual(dict(os.environ), before)

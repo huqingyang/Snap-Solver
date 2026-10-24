@@ -1,6 +1,6 @@
 /* ============================================================
    SettingsManager — 纯数据层（单一真源）
-   models / api keys / prompts / 中转 / 代理 / 语言 / 本地偏好
+   models / api keys / prompts / API 地址 / 代理 / 语言 / 本地偏好
    全部驻内存，变更即持久化（localStorage 或后端 REST），并通过
    CustomEvent('change', {detail:{type}}) 广播；
    UI 渲染在 model-page.js（模型）与 settings-page.js（设置）。
@@ -58,7 +58,7 @@ class SettingsManager extends EventTarget {
         this._tier = 'deep';     // 思考档位全局统一，按模型能力钳制
         this.prompts = {};
         this.currentPromptId = null;
-        this.relayApis = {};     // {provider: url} 中转地址
+        this.relayApis = {};     // {provider: url} API Base URL 覆盖项
         this._language = '中文';
         this._proxyEnabled = false;
         this._proxyHost = '127.0.0.1';
@@ -249,7 +249,7 @@ class SettingsManager extends EventTarget {
         this.emitChange('network');
     }
 
-    /* ---------- 中转地址（填了即走中转） ---------- */
+    /* ---------- API Base URL（覆盖默认接口地址，与 HTTP 代理独立） ---------- */
     async setRelay(provider, url) {
         this.relayApis[provider] = (url || '').trim();
         const enabled = Object.values(this.relayApis).some(v => !!v);
@@ -259,7 +259,7 @@ class SettingsManager extends EventTarget {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ apis: this.relayApis, enabled })
             });
-            window.uiManager?.showToast('中转地址已保存', 'success');
+            window.uiManager?.showToast('API 地址已保存', 'success');
         } catch (e) {
             window.uiManager?.showToast('保存失败，请重试', 'error');
         }
